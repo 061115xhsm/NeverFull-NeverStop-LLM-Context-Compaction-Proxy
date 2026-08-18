@@ -7,12 +7,15 @@
 | 通用对话 | baseline | 0.494 | 1.0 | 0.943 |  |
 | 通用对话 | summary | 0.412 | 1.0 | 0.956 |  |
 | 通用对话 | adaptive | 0.582 | 1.0 | 0.935 | attempts=2, met_floor=True |
+| 通用对话 | llm_adaptive | 0.582 | 1.0 | 0.935 | LLM不可用→降级 |
 | 工具调用 | baseline | 0.349 | 0.667 | 0.957 |  |
 | 工具调用 | summary | 0.26 | 1.0 | 0.949 |  |
 | 工具调用 | adaptive | 0.388 | 1.0 | 0.907 | attempts=3, met_floor=True |
+| 工具调用 | llm_adaptive | 0.388 | 1.0 | 0.907 | LLM不可用→降级 |
 | 代码对话 | baseline | 0.496 | 0.667 | 0.911 |  |
 | 代码对话 | summary | 0.503 | 0.667 | 0.968 |  |
 | 代码对话 | adaptive | 0.706 | 0.667 | 0.901 | attempts=1, met_floor=True |
+| 代码对话 | llm_adaptive | 0.706 | 0.667 | 0.901 | LLM不可用→降级 |
 
 ## 二、多档位压缩率权衡(压缩率↔保真度↔保留率)
 

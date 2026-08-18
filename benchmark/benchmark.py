@@ -118,6 +118,29 @@ def adaptive_compress(messages: list, budget: int, scorer: FidelityScorer) -> di
     return compactor.compact(messages, budget)
 
 
+def llm_adaptive_compress(messages: list, budget: int, scorer: FidelityScorer) -> dict:
+    """
+    LLM + 保真回退策略(工业级主路径):
+
+    1. 尝试真实 LLM 摘要(model_hub,运行时读环境变量)
+    2. LLM 摘要成功 → 保真度校验:低于底线回退 AdaptiveCompactor
+    3. LLM 不可用 → 直接降级 AdaptiveCompactor
+    """
+    result = llm_summary_compress(messages, budget)
+    if result.get("used_llm") and result.get("messages"):
+        llm_messages = result["messages"]
+        orig_text = "\n".join(str(m.get("content", "")) for m in messages)
+        comp_text = "\n".join(str(m.get("content", "")) for m in llm_messages)
+        fidelity = scorer.score(orig_text, comp_text)
+        if fidelity >= 0.90:
+            return {"messages": llm_messages, "fidelity": fidelity,
+                    "attempts": 1, "met_floor": True, "used_llm": True}
+        # 保真度不足 → 回退到自适应选句压缩
+    fallback = adaptive_compress(messages, budget, scorer)
+    fallback["used_llm"] = False
+    return fallback
+
+
 # ── 指标计算 ────────────────────────────────────────────────────────
 
 def calc_metrics(original: list, compacted: list, scorer: FidelityScorer,
@@ -160,12 +183,18 @@ def run_benchmark() -> list:
         a_m["attempts"] = a_result["attempts"]
         a_m["met_floor"] = a_result["met_floor"]
 
+        # LLM + 保真回退
+        l_result = llm_adaptive_compress(messages, budget, scorer)
+        l_m = calc_metrics(messages, l_result["messages"], scorer, sample["info_points"])
+        l_m["used_llm"] = l_result.get("used_llm", False)
+
         rows.append({
             "name": sample["name"],
             "query": sample["query"],
             "baseline": b_m,
             "summary": s_m,
             "adaptive": a_m,
+            "llm_adaptive": l_m,
         })
     return rows
 
@@ -207,11 +236,13 @@ def write_report(rows: list, tradeoff: list = None) -> str:
         "|------|------|--------|-----------|-----------|------|",
     ]
     for r in rows:
-        for strat in ("baseline", "summary", "adaptive"):
+        for strat in ("baseline", "summary", "adaptive", "llm_adaptive"):
             m = r[strat]
             note = ""
             if strat == "adaptive":
                 note = f"attempts={m.get('attempts', '')}, met_floor={m.get('met_floor', '')}"
+            if strat == "llm_adaptive":
+                note = "LLM" if m.get("used_llm") else "LLM不可用→降级"
             lines.append(
                 f"| {r['name']} | {strat} | {m['compression_ratio']} | {m['retention']} "
                 f"| {m['fidelity']} | {note} |"
