@@ -1,0 +1,12 @@
+[package]
+name = "compaction_fast"
+version = "0.1.0"
+edition = "2021"
+description = "LLM Context Compaction Proxy — 高频路径 Rust 加速扩展"
+
+[lib]
+name = "compaction_fast"
+crate-type = ["cdylib"]
+
+[dependencies]
+serde_json = "1"
