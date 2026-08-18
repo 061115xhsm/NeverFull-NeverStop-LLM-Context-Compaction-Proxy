@@ -1,0 +1,524 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[UTF8]{ctex}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amssymb}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  language=bash
+}
+
+\title{\textbf{LLM Context Compaction Proxy}\\[0.5em]
+\large README(LaTeX 版)}
+\author{LLM Context Compaction Proxy Contributors}
+\date{2026 年 8 月}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================
+\section{简介}
+% ============================================================
+
+LLM Context Compaction Proxy 是一个透明、零配置的 LLM API 上下文压缩代理。
+将其置于 AI Agent 与任意 LLM 提供商之间,当对话上下文逼近模型 token 上限时,
+它会自动压缩对话历史,使 Agent 无限期运行而不触碰上下文窗口墙。
+
+\emph{40 项压缩技术}横跨 7 代演进,来源涵盖学术研究
+(ARC、AFM、PACMS、CoMem、MemSkill)与生产实践
+(Cursor、Devin、SWE-agent)。
+
+% ============================================================
+\section{工作原理}
+% ============================================================
+
+\begin{verbatim}
++-------------+     +----------------------+     +--------------+
+|  AI Agent   |---->|  Compaction Proxy    |---->|  LLM Provider|
+| (Claude/GPT)|<----|  localhost:8198      |<----|  (any API)   |
++-------------+     |                      |     +--------------+
+                    |  - Monitor context % |
+                    |  - Auto-compress     |
+                    |  - Preserve key info |
+                    |  - Route to provider |
+                    +----------------------+
+\end{verbatim}
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Passthrough(透传)}——上下文低于限制的请求直接通过,零开销;
+  \item \textbf{Detect(检测)}——上下文达到阈值(默认 80\%)时触发压缩;
+  \item \textbf{Compress(压缩)}——使用独立压缩模型对旧消息生成摘要;
+  \item \textbf{Resume(恢复)}——压缩结果替换旧消息,Agent 无缝继续。
+\end{enumerate}
+
+% ============================================================
+\section{快速开始}
+% ============================================================
+
+\subsection{前置条件}
+
+\begin{itemize}
+  \item Python 3.10+
+  \item \texttt{aiohttp}(\texttt{pip install aiohttp})
+\end{itemize}
+
+\subsection{安装与运行}
+
+\begin{lstlisting}
+# Clone
+git clone https://github.com/your-org/llm-compaction-proxy.git
+cd llm-compaction-proxy
+
+# Set your upstream LLM API
+export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1
+export COMPACTION_PROXY_MODEL=gpt-4o-mini
+
+# Run
+python3 compaction-proxy.py
+\end{lstlisting}
+
+代理监听在 \texttt{localhost:8198}。将 Agent 的 API 端点指向此处即可。
+
+\subsection{使用环境变量文件}
+
+\begin{lstlisting}
+cp .env.example .env
+# Edit .env with your settings
+source .env
+python3 compaction-proxy.py
+\end{lstlisting}
+
+\subsection{作为 systemd 服务}
+
+\begin{lstlisting}
+cp systemd/compaction-proxy.service ~/.config/systemd/user/
+# Edit the service file to set your paths and environment
+systemctl --user daemon-reload
+systemctl --user enable --now compaction-proxy.service
+\end{lstlisting}
+
+% ============================================================
+\section{连接 AI Agent}
+% ============================================================
+
+\subsection{Claude Code (Anthropic)}
+
+\begin{lstlisting}
+# Set the API base to the proxy
+export ANTHROPIC_BASE_URL=http://localhost:8198
+claude
+\end{lstlisting}
+
+或在 Claude Code 设置中:
+
+\begin{lstlisting}[language=bash]
+{
+  "apiBaseUrl": "http://localhost:8198"
+}
+\end{lstlisting}
+
+\subsection{OpenAI 兼容 Agent(GPT、DeepSeek、Ollama、vLLM 等)}
+
+\begin{lstlisting}
+export OPENAI_BASE_URL=http://localhost:8198/v1
+export OPENAI_API_KEY=your-key
+\end{lstlisting}
+
+适用于任何使用 OpenAI SDK 或兼容 API 的 Agent。
+
+\subsection{Cursor / Continue / 其他 IDE 扩展}
+
+在扩展设置中设置 API base URL:
+\begin{itemize}
+  \item \textbf{Cursor}:Settings $\rightarrow$ Models $\rightarrow$ OpenAI API Base
+        $\rightarrow$ \texttt{http://localhost:8198/v1}
+  \item \textbf{Continue}:\texttt{config.json} $\rightarrow$
+        \texttt{"apiBase": "http://localhost:8198/v1"}
+\end{itemize}
+
+\subsection{自定义 Agent(直接 API 调用)}
+
+\begin{lstlisting}[language=Python]
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:8198/v1",
+    api_key="your-key"
+)
+
+response = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True
+)
+\end{lstlisting}
+
+% ============================================================
+\section{支持的提供商}
+% ============================================================
+
+\begin{longtable}{@{}llc@{}}
+  \toprule
+  提供商 & 格式 & 自动检测 \\
+  \midrule
+  OpenAI & OpenAI & \checkmark \\
+  Anthropic & Anthropic & \checkmark \\
+  Google Gemini & Gemini & \checkmark \\
+  DeepSeek & OpenAI & \checkmark \\
+  Ollama & OpenAI & \checkmark \\
+  vLLM & OpenAI & \checkmark \\
+  LiteLLM & OpenAI & \checkmark \\
+  OpenRouter & OpenAI & \checkmark \\
+  Together AI & OpenAI & \checkmark \\
+  Groq & OpenAI & \checkmark \\
+  Fireworks & OpenAI & \checkmark \\
+  MaaS 代理 & Anthropic & \checkmark \\
+  \bottomrule
+\end{longtable}
+
+设置 \texttt{COMPACTION\_PROXY\_UPSTREAM\_IS\_ANTHROPIC=auto}(默认)自动检测,
+或使用 \texttt{true}/\texttt{false} 强制覆盖。
+
+% ============================================================
+\section{接入你的 LLM 提供商}
+% ============================================================
+
+代理位于 Agent 与任意 LLM API 之间。\textbf{一个变量决定上游}:
+\texttt{COMPACTION\_PROXY\_UPSTREAM}。其余均为可选。
+
+\subsection{OpenAI / OpenAI 兼容系}
+
+\begin{lstlisting}
+export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1
+export COMPACTION_PROXY_MODEL=gpt-4o-mini
+python3 compaction-proxy.py
+\end{lstlisting}
+
+开箱即用——代理转发请求,并将压缩结果转换回 Agent 期望的 OpenAI 格式。
+
+\subsection{Anthropic (Claude)}
+
+\begin{lstlisting}
+export COMPACTION_PROXY_UPSTREAM=https://api.anthropic.com
+export COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true
+export COMPACTION_PROXY_MODEL=claude-sonnet-4-5
+python3 compaction-proxy.py
+\end{lstlisting}
+
+代理使用 Anthropic Messages API(\texttt{/v1/messages}),Anthropic 原生 Agent
+可直接连接;OpenAI 格式 Agent 指向同一代理时自动应用格式转换。
+
+\subsection{Google Gemini}
+
+\begin{lstlisting}
+export COMPACTION_PROXY_UPSTREAM=https://generativelanguage.googleapis.com
+export COMPACTION_PROXY_MODEL=gemini-2.0-flash
+python3 compaction-proxy.py
+\end{lstlisting}
+
+API key 通过 \texttt{x-goog-api-key} 请求头传递(绝不进入 URL),不会出现在访问日志中。
+
+\subsection{DeepSeek}
+
+\begin{lstlisting}
+export COMPACTION_PROXY_UPSTREAM=https://api.deepseek.com/v1
+export COMPACTION_PROXY_MODEL=deepseek-chat
+python3 compaction-proxy.py
+\end{lstlisting}
+
+DeepSeek 上下文窗口(\texttt{deepseek-chat}/\texttt{coder}/\texttt{r1}/\texttt{v3},
+128K)已预注册,无需额外配置即可完成压力预估。
+
+\subsection{本地模型 (Ollama)}
+
+\begin{lstlisting}
+export COMPACTION_PROXY_UPSTREAM=http://localhost:11434/v1   # default
+export COMPACTION_PROXY_MODEL=llama3.1
+python3 compaction-proxy.py
+\end{lstlisting}
+
+\subsection{验证是否生效}
+
+\begin{lstlisting}
+# Health check
+curl http://localhost:8198/health
+
+# Send a test request through the proxy (OpenAI format)
+curl -X POST http://localhost:8198/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
+\end{lstlisting}
+
+\subsection{使用提示}
+
+\begin{itemize}
+  \item \textbf{压缩模型 $\neq$ 主模型}:设置
+        \texttt{COMPACTION\_PROXY\_COMPACTION\_UPSTREAM} /
+        \texttt{COMPACTION\_PROXY\_COMPACTION\_API\_KEY},可在主模型之外
+        使用更廉价的模型做摘要;
+  \item \textbf{Anthropic 格式 MaaS 代理}(如讯飞 coding API):设置
+        \texttt{COMPACTION\_PROXY\_UPSTREAM\_IS\_ANTHROPIC=true} 以应用请求转换;
+  \item \textbf{切勿在配置中硬编码密钥}:使用环境变量或 \texttt{apiKeyEnv} 模式,
+        代理从不记录 API key。
+\end{itemize}
+
+% ============================================================
+\section{40 项压缩技术}
+% ============================================================
+
+\subsection{V3 核心(8 项)}
+
+\begin{longtable}{@{}clp{8cm}@{}}
+  \toprule
+  \# & 技术 & 说明 \\
+  \midrule
+  1  & \textbf{ARC} 地址化引用 & 用紧凑的 \texttt{@ref} 指针替换重复内容 \\
+  2  & \textbf{AFM} 自适应保真 & 消息级 Full/Compressed/Placeholder + 子模增强 \\
+  3  & \textbf{PACMS} 子模选择 & 贪心、保真感知的消息选择 \\
+  4  & \textbf{CCL} 承诺提取 & 提取并保留对话中的承诺 \\
+  5  & 抖动检测 & 检测压缩循环(3 次压缩 / 5 条消息) \\
+  6  & 两阶段 Token 估算 & CJK 感知的精确 token 计数 \\
+  7  & 预飞安全验证 & 发送前验证上下文合法性 \\
+  8  & 并行压缩 & 大上下文分块并行压缩 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{V4 增强(10 项)}
+
+\begin{longtable}{@{}clp{8cm}@{}}
+  \toprule
+  \# & 技术 & 来源 \\
+  \midrule
+  9  & 情节—语义双层记忆 & arXiv:2605.17625 \\
+  10 & 思考掩码 & Kevin-32B / Devin 模式 \\
+  11 & 标签选择性保留 & SWE-agent / memor-ai \\
+  12 & 结构感知工具输出压缩 & memor-ai \\
+  13 & 密钥脱敏 & Cursor / memor-ai \\
+  14 & 缓存优化消息排序 & 层哈希感知 + \texttt{cache\_control} 断点 \\
+  15 & 增量压缩 & CoMem (arXiv:2605.30842) \\
+  16 & 四信号记忆评分 & 语义 50\%、近因 25\%、类型 15\%、质量 10\% \\
+  17 & 查询位置优化 & 查询置尾、配对邻接、近期窗口 \\
+  18 & 压缩项剪枝 & OpenAI 模式 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{V5 会话(5 项)}
+
+\begin{longtable}{@{}clp{8cm}@{}}
+  \toprule
+  \# & 技术 & 说明 \\
+  \midrule
+  19 & 跨会话记忆 + FTS5 & SQLite 会话持久化 + 全文搜索 \\
+  20 & 压缩前后 Hooks & 压缩前后的 HTTP webhook \\
+  21 & 孤儿工具对清理 & 清理悬空的 tool call/result 对 \\
+  22 & 用户画像记忆 & 持久化用户偏好(USER.md) \\
+  23 & 可插拔压缩引擎 & 切换压缩后端(default / dual-layer) \\
+  \bottomrule
+\end{longtable}
+
+\subsection{V6 Provider(5 项)}
+
+\begin{longtable}{@{}clp{8cm}@{}}
+  \toprule
+  \# & 技术 & 说明 \\
+  \midrule
+  24 & Provider 抽象层 & 通用 OpenAI/Anthropic/Gemini 兼容 \\
+  25 & 压缩 Provider & 独立的上游与 API key \\
+  26 & Provider 专属溢出检测 & 各 Provider 错误模式匹配 \\
+  27 & 双层压缩 & 网关(85\% 缩减)+ Agent(L1 的 50\%) \\
+  28 & CachedSystemPrompt & 10 层前缀缓存 + \texttt{cache\_control} 断点 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{V7 MemSkill(5 项)}
+
+\begin{longtable}{@{}clp{8cm}@{}}
+  \toprule
+  \# & 技术 & 来源 \\
+  \midrule
+  36 & 自演进记忆技能 & arXiv:2602.02474 \\
+  37 & 技能控制器 & 关键词匹配 + Gumbel-Top-K 选择 \\
+  38 & 技能注册表 & CRUD + 激活生命周期 + 快照回滚 \\
+  39 & 参数覆盖管线 & 重要性权重 + 保真乘数 \\
+  40 & DELETE 型技能管线跳过 & 跳过 DELETE 操作的语义提取 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{基础设施}
+
+\begin{longtable}{@{}lp{8cm}@{}}
+  \toprule
+  特性 & 说明 \\
+  \midrule
+  自动 Provider 检测 & 自动识别 OpenAI vs Anthropic vs Gemini \\
+  模型注册表 & 67+ 已知上下文窗口的模型 \\
+  熔断器 & 3 次失败 $\rightarrow$ 60 秒冷却 \\
+  压缩缓存 & 30 分钟 TTL,避免对未变化上下文重复压缩 \\
+  预压缩 & 达到限制前 80\% 触发 \\
+  溢出恢复 & 溢出错误时压缩并重试 \\
+  智能截断 & 基于角色的预算分配 \\
+  标识符保留 & 压缩时保持代码标识符完整 \\
+  摘要合并 & 合并并行压缩块结果 \\
+  \bottomrule
+\end{longtable}
+
+% ============================================================
+\section{配置说明}
+% ============================================================
+
+所有配置均为带合理默认值的环境变量,完整列表见 \texttt{.env.example}。
+
+\subsection{核心配置}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_PORT} & \texttt{8198} & 代理监听端口 \\
+  \texttt{COMPACTION\_PROXY\_UPSTREAM} & \texttt{http://localhost:11434/v1} & 上游 LLM API 基地址 \\
+  \texttt{COMPACTION\_PROXY\_UPSTREAM\_IS\_ANTHROPIC} & \texttt{auto} & 强制 Anthropic 格式 \\
+  \texttt{COMPACTION\_PROXY\_MODEL} & \texttt{gpt-4o-mini} & 压缩/摘要模型 \\
+  \texttt{COMPACTION\_PROXY\_DEFAULT\_MODEL} & \texttt{gpt-4o-mini} & 无模型请求的默认模型 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{压缩行为}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_KEEP\_TURNS} & \texttt{6} & 保留的最近轮次(不压缩) \\
+  \texttt{COMPACTION\_PROXY\_MAX\_RETRIES} & \texttt{3} & 压缩 API 最大重试次数 \\
+  \texttt{COMPACTION\_PROXY\_TIMEOUT} & \texttt{120} & 压缩超时(秒) \\
+  \texttt{COMPACTION\_PROXY\_PARALLEL\_BLOCKS} & \texttt{3} & 并行压缩块数 \\
+  \texttt{COMPACTION\_PROXY\_PREEMPTIVE\_THRESHOLD} & \texttt{0.80} & 上下文 80\% 时预压缩 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{双层压缩}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_ENGINE} & \texttt{default} & 压缩引擎(default / dual-layer) \\
+  \texttt{COMPACTION\_PROXY\_DUAL\_GATEWAY\_RATIO} & \texttt{0.15} & L1 网关:保留 15\%(85\% 缩减) \\
+  \texttt{COMPACTION\_PROXY\_DUAL\_AGENT\_RATIO} & \texttt{0.50} & L2 Agent:保留 L1 输出的 50\% \\
+  \bottomrule
+\end{longtable}
+
+\subsection{安全}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_API\_SECRET} & \textit{空} & 代理访问密钥 \\
+  \texttt{COMPACTION\_PROXY\_REDACT\_SECRETS} & \texttt{1} & 自动脱敏消息中的密钥 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{会话与记忆}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_BACKGROUND\_SESSIONS} & \texttt{3} & 并行压缩的后台会话数 \\
+  \texttt{COMPACTION\_PROXY\_LLM\_MEMORY} & \texttt{1} & 启用 LLM 记忆提取 \\
+  \texttt{COMPACTION\_PROXY\_MEMSKILL} & \texttt{0} & 启用自演进 MemSkill \\
+  \bottomrule
+\end{longtable}
+
+% ============================================================
+\section{架构}
+% ============================================================
+
+\begin{verbatim}
+Request Flow:
+  Agent -> Proxy -> [context check] -> Upstream
+                         |
+                    if > 80% full:
+                         |
+                    +----v----+
+                    | Compact |--> Compaction Model (separate provider)
+                    | Engine  |<-- Compressed Summary
+                    +----+----+
+                         |
+                    Replace old messages
+                    with compressed summary
+                         |
+                         v
+                    -> Upstream (with compacted context)
+\end{verbatim}
+
+\subsection{双层压缩 (V6)}
+
+\begin{verbatim}
+Original Context (100%)
+       |
+  +----v----+
+  |  L1 Gateway  |  Keep 15% -> 85% reduction
+  |  Compression |
+  +----+----+
+       | 15% retained
+  +----v----+
+  |  L2 Agent   |  Keep 50% of L1 -> 92.5% total reduction
+  |  Compression |
+  +----+----+
+       | 7.5% of original
+       v
+  Final Context
+\end{verbatim}
+
+% ============================================================
+\section{API 兼容性}
+% ============================================================
+
+代理是透明的——转发所有 API 端点并保持原始请求/响应格式。
+Agent 无需知道它的存在。
+
+\subsection{OpenAI 格式}
+
+\begin{verbatim}
+POST /v1/chat/completions
+POST /v1/models
+\end{verbatim}
+
+\subsection{Anthropic 格式}
+
+\begin{verbatim}
+POST /v1/messages
+POST /v1/messages/count_tokens
+\end{verbatim}
+
+\subsection{Gemini 格式}
+
+\begin{verbatim}
+POST /v1beta/models/{model}:generateContent
+POST /v1beta/models/{model}:streamGenerateContent
+\end{verbatim}
+
+% ============================================================
+\section{许可证}
+% ============================================================
+
+MIT License——详见 \texttt{LICENSE} 文件。
+
+\end{document}
+
