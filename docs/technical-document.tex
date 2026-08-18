@@ -158,6 +158,296 @@ Request Flow:
 
 \newpage
 % ============================================================
+\section{核心算法解析}
+% ============================================================
+
+本节深入剖析代理内部的核心算法实现,所有内容均对应源码
+(\texttt{compaction-proxy.py})中的实际逻辑。
+
+\subsection{CJK 感知的 Token 估算}
+
+源码 \texttt{estimate\_tokens\_v3} 对文本按字符类型分类计数,
+并依据每类字符的 token 密度折算:
+
+\begin{equation}
+  T(\text{text}) = \frac{N_{\text{CJK}}}{1.5}
+  + \frac{N_{\text{ASCII}}}{4.0}
+  + \frac{N_{\text{other}}}{2.5}
+  \label{eq:token-estimate}
+\end{equation}
+
+\begin{itemize}
+  \item $N_{\text{CJK}}$:中日韩统一表意文字数(约 1.5 字符/token);
+  \item $N_{\text{ASCII}}$:ASCII 字符数(约 4 字符/token);
+  \item $N_{\text{other}}$:其余 Unicode 字符(约 2.5 字符/token)。
+\end{itemize}
+
+估算结果取整且最小为 1。代理采用\textbf{两阶段}策略:
+快速启发式(\texttt{estimate\_tokens\_fast})用于预筛,
+精确逐消息估算(\texttt{estimate\_messages\_tokens})用于预算决策。
+
+\subsection{ARC 地址化引用(Addressable Recall Compaction)}
+
+源码 \texttt{apply\_arc\_citations} 将\textbf{超过 800 字符}的
+\texttt{tool\_result} 替换为短 ID 引用,原文存入 \texttt{ARCLog}:
+
+\begin{lstlisting}[language={}]
+if len(result_text) > 800:
+    arc_id = arc_log.store(result_text, source_msg_idx=i)
+    citation = arc_log.make_citation(arc_id, preview_len=100)
+    new_block["content"] = (
+        "[ARC Reference: {citation}]\n"
+        "Full content available via ID: {arc_id}"
+    )
+\end{lstlisting}
+
+\begin{itemize}
+  \item 阈值:800 字符(低于阈值的内容原样保留,避免过度引用);
+  \item 存储:\texttt{ARCLog} 内存环(默认上限 500 条),支持按 ID 回查
+        (HTTP \texttt{GET /arc/\{arc\_id\}});
+  \item 引用形式:\texttt{[ARC Reference: <前100字符>]} + 完整 ID,
+        LLM 在需要细节时可经回查端点取回原文。
+\end{itemize}
+
+\subsection{PACMS 子模选择}
+
+源码 \texttt{submodular\_select} 以\textbf{贪心近似}求解带预算的子模最大化
+(论文 arXiv:2606.20047 的四信号记忆评分体系):
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{评分}:对每条消息计算重要性 $I_i$(\texttt{\_message\_importance\_v4}:
+        语义 50\%、近因 25\%、类型 15\%、质量 10\%);
+  \item \textbf{保真加权}:按 AFM 保真级别调整——
+        \texttt{FULL} 乘 1.5,\texttt{PLACEHOLDER} 乘 0.5(可由 MemSkill 覆盖);
+  \item \textbf{成本}:每条消息的 token 估算 $C_i$(至少为 1);
+  \item \textbf{贪心选择}:在预算内反复选取
+        $\arg\max_i (I_i / C_i)$,直至预算耗尽或无可选消息。
+\end{enumerate}
+
+\textbf{系统性约束}:role 为 \texttt{system} 的消息\textbf{必须选中},
+不参与贪心竞争,保证系统提示完整保留。
+
+\subsection{压缩安全验证}
+
+源码 \texttt{verify\_compaction\_safety} 在压缩后执行\textbf{预飞安全校验}
+(arXiv:2606.03618 safety pattern):
+
+\begin{equation}
+  \text{safe} \iff T(\text{compacted}) < T(\text{original})
+  \label{eq:safety}
+\end{equation}
+
+若压缩结果 token 数\textbf{不小于}原文,判定为不安全,降级为
+\texttt{aggressive\_truncate\_messages} 激进截断,防止压缩反而膨胀。
+
+% ============================================================
+\section{压缩流水线详解}
+% ============================================================
+
+\subsection{do\_compaction 主流程}
+
+源码 \texttt{do\_compaction} 是压缩的核心入口,按以下顺序执行:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{MemSkill 技能选择}(V7):构建 \texttt{CompactionContext},
+        由 \texttt{SkillController} 按关键词匹配 + Gumbel-Top-K 选择技能;
+  \item \textbf{抖动检测}:若 \texttt{ThrashingDetector} 判定蠕变
+        (窗口内压缩次数达到阈值),直接切换激进截断并返回;
+  \item \textbf{预压缩 Hook}:调用 \texttt{HookManager.call\_pre\_compact},
+        可阻断本次压缩;
+  \item \textbf{自适应 keep\_turns}:按用户消息数动态下调保留轮次,
+        确保存在可压缩的旧消息;
+  \item \textbf{消息拆分}:\texttt{split\_messages} 分为旧消息与近期消息;
+  \item \textbf{语义记忆提取}:可选 LLM 驱动记忆提取 + 正则兜底,
+        知识写入 \texttt{SemanticMemory};
+  \item \textbf{ARC 引用替换}:长 \texttt{tool\_result} 转 ID 引用;
+  \item \textbf{AFM 保真分级}:为每条消息标注 Full/Compressed/Placeholder;
+  \item \textbf{CCL 承诺提取}:抽取目标/约束/决策/错误/文件操作;
+  \item \textbf{子模选择}:在预算内选择最重要的旧消息;
+  \item \textbf{并行块压缩}:选中消息 $\geq 6$ 条时
+        \texttt{compact\_messages\_parallel} 分块并行摘要;
+  \item \textbf{后压缩 Hook}:允许 webhook 修改摘要;
+  \item \textbf{构建压缩消息}:摘要 + 近期消息重组;
+  \item \textbf{孤儿工具对清理}:\texttt{sanitize\_tool\_pairs};
+  \item \textbf{会话持久化}:\texttt{SessionStore} 保存会话与原始转录;
+  \item \textbf{安全验证 + 重试}:验证失败降级截断;
+        非预压缩场景还向上游发一次验证请求确认不再溢出。
+\end{enumerate}
+
+\subsection{增量压缩}
+
+\texttt{compact\_messages} 支持\textbf{增量压缩}(CoMem, arXiv:2605.30842):
+若存在上次压缩摘要且消息数增加,只对\textbf{新增消息}生成增量摘要,
+再与旧摘要合并,避免对全量历史重复压缩。新增内容不足 50 字符时
+直接复用旧摘要。
+
+\subsection{双层压缩(Dual-Layer)}
+
+\texttt{DualLayerCompressor} 提供两阶段防御纵深:
+
+\begin{verbatim}
+Original Context (100%)
+       |
+  +----v----+    L1 Gateway:  keep 15%  -> 85% reduction
+  |  L1     |
+  +----+----+
+       | 15% retained
+  +----v----+    L2 Agent:    keep 50% of L1 -> 92.5% total
+  |  L2     |
+  +----+----+
+       | 7.5% of original
+       v
+  Final Context
+\end{verbatim}
+
+\begin{itemize}
+  \item L1 失败 $\Rightarrow$ 整体失败(不可继续 L2);
+  \item L1 结果已低于阈值 $\Rightarrow$ 跳过 L2;
+  \item L2 失败 $\Rightarrow$ 回退 L1 结果(优于无);
+  \item 双层结果未通过安全验证 $\Rightarrow$ 降级激进截断。
+\end{itemize}
+
+% ============================================================
+\section{协议转换层}
+% ============================================================
+
+代理同时兼容 OpenAI / Anthropic / Gemini 三种请求格式,核心是
+\texttt{ProviderAdapter} 抽象类与三个实现
+(\texttt{OpenAIProvider} / \texttt{AnthropicProvider} / \texttt{GeminiProvider})。
+
+\subsection{OpenAI $\rightarrow$ Anthropic 请求转换}
+
+当上游为 Anthropic 格式而客户端发送 OpenAI 请求时,
+\texttt{openai\_to\_anthropic\_request} 执行字段映射:
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  OpenAI 字段 & Anthropic 字段 & 说明 \\
+  \midrule
+  \texttt{role: system} & \texttt{system} 顶层 & 首个 system 消息提升为顶层 \\
+  \texttt{role: assistant} & \texttt{role: assistant} & 不变 \\
+  \texttt{role: user} & \texttt{role: user} & 不变 \\
+  \texttt{content: "str"} & \texttt{content: [\{type:text,...\}]} & 字符串转内容块 \\
+  \texttt{tool\_calls} & \texttt{tool\_use} 块 & 函数调用转工具使用 \\
+  \texttt{role: tool} & \texttt{tool\_result} 块 & 工具结果消息转换 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{Anthropic $\rightarrow$ OpenAI 响应转换}
+
+\texttt{anthropic\_to\_openai\_response} 将上游 Anthropic 响应还原为
+OpenAI 格式,使客户端无需感知上游差异:
+\texttt{content} 块提取文本、\texttt{thinking} 与 \texttt{tool\_use}
+分别映射为 OpenAI 的对应结构,流式场景由
+\texttt{convert\_anthropic\_sse\_to\_openai} 逐事件转换 SSE。
+
+\subsection{自动 Provider 探测}
+
+\texttt{detect\_provider} 依据三路信号判定:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{模型名}:含 \texttt{claude}/Gemini 特征词;
+  \item \textbf{请求头}:\texttt{anthropic-version} 头标记 Anthropic;
+  \item \textbf{上游 URL}:\texttt{anthropic}/\texttt{claude}/\texttt{coding-api}
+        子串判定 Anthropic 格式上游。
+\end{enumerate}
+判定结果可通过 \texttt{COMPACTION\_PROXY\_UPSTREAM\_IS\_ANTHROPIC}
+(\texttt{auto}/\texttt{true}/\texttt{false})强制覆盖。
+
+% ============================================================
+\section{可靠性组件状态机}
+% ============================================================
+
+\subsection{熔断器(CircuitBreaker)}
+
+\texttt{CircuitBreaker} 三状态模型,默认阈值 3 次失败、冷却 60 秒:
+
+\begin{verbatim}
+        failure >= threshold
+ CLOSED ------------------------> OPEN
+   ^  |                            |  |
+   |  | record_success             |  cooldown elapsed
+   |  v                            v  |
+   |  (reset)                   HALF_OPEN
+   |                               |
+   +--------- success -------------+
+\end{verbatim}
+
+\begin{itemize}
+  \item \textbf{CLOSED}:正常放行;失败累计达阈值 $\rightarrow$ OPEN;
+  \item \textbf{OPEN}:拒绝压缩调用,冷却期过后 $\rightarrow$ HALF\_OPEN;
+  \item \textbf{HALF\_OPEN}:试探放行一次,成功 $\rightarrow$ CLOSED,
+        失败 $\rightarrow$ OPEN。
+\end{itemize}
+
+\subsection{抖动检测(ThrashingDetector)}
+
+\texttt{ThrashingDetector} 检测压缩蠕变(Claude Code 同款思路):
+在 $W$ 条消息窗口内压缩次数达到 $M$(\texttt{THRASHING\_COMPACTS}),
+即判定蠕变并切换为\textbf{激进截断}而非 LLM 压缩,
+避免"压缩 $\rightarrow$ 重填 $\rightarrow$ 再压缩"的死循环。
+
+\subsection{压缩缓存(CompactionCache)}
+
+\texttt{CompactionCache} 以消息序列 SHA-256 为键缓存摘要,
+TTL 30 分钟。\textbf{缓存键同时纳入自定义压缩指令}
+(\texttt{salt} 参数),确保不同指令不会串用缓存结果。
+
+\subsection{格式回退与重试}
+
+\begin{itemize}
+  \item Anthropic 上游返回\textbf{仅 thinking 无文本}时,自动以流式重试捕获内容
+        (兼容部分模型非流式响应空文本的缺陷);
+  \item 压缩调用带熔断与重试(最多 \texttt{MAX\_COMPACTION\_RETRIES} 次,
+        每次递减保留轮次);
+  \item 摘要为空或上游 4xx/5xx 时,按提供商特定模式识别并降级。
+\end{itemize}
+
+% ============================================================
+\section{会话存储架构}
+% ============================================================
+
+\subsection{SessionStore(SQLite + FTS5)}
+
+\texttt{SessionStore} 提供跨会话持久化与全文检索:
+
+\begin{lstlisting}[language={}]
+-- 核心表(示意)
+CREATE TABLE sessions (
+  id           TEXT PRIMARY KEY,
+  summary      TEXT NOT NULL,
+  semantic     TEXT,
+  msg_count    INTEGER,
+  created_at   INTEGER,
+  updated_at   INTEGER
+);
+CREATE VIRTUAL TABLE sessions_fts USING fts5(summary, semantic);
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{save\_session}:写入会话摘要、语义记忆快照与消息数;
+  \item \texttt{search\_sessions}:FTS5 全文搜索(HTTP \texttt{GET /sessions/search});
+  \item \texttt{get\_prior\_summary} / \texttt{save\_prior\_summary}:
+        增量压缩的前置摘要状态;
+  \item \texttt{save\_transcript} / \texttt{get\_transcript}:原始转录存档,
+        支持会话恢复(\texttt{POST /sessions/\{id\}/resume})。
+\end{itemize}
+
+\subsection{SemanticMemory(情节—语义双层记忆)}
+
+\texttt{SemanticMemory} 持久化为 JSON 文件(原子写入):
+\begin{itemize}
+  \item 六类知识槽位:goals / decisions / errors / files / constraints / insights;
+  \item 每类上限 20 条(去重 + 尾裁),提示注入时取最近 10 条;
+  \item 提取路径:LLM 结构化提取优先,正则(commitments)兜底;
+  \item 并发安全:读写由 \texttt{threading.Lock} 保护,落盘采用临时文件 + 原子替换。
+\end{itemize}
+
+\subsection{UserProfile(用户画像)}
+
+\texttt{UserProfile} 将用户偏好持久化为 \texttt{USER.md} 格式
+(Hermes 同款有界持久化),供压缩提示注入,保持跨会话的用户一致性。
+
+% ============================================================
 \section{配置说明}
 % ============================================================
 
