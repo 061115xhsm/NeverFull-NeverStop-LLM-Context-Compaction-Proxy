@@ -1,29 +1,72 @@
 # LLM Context Compaction Proxy
 
-> **Never Full, Never Stop** — 永不超限,永不停歇
->
-> A transparent, zero-config context compaction proxy for LLM APIs. Sit it between your AI agent and any LLM provider — it automatically compresses conversation context when it approaches the model's token limit, keeping your agents running indefinitely without hitting context window walls.
+> **永不超限,永不停歇 · Never Full, Never Stop**
 
-**40 compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
+**Read this in other languages:** [简体中文](README-zh.md)
 
-## How It Works
+A transparent, zero-config context compaction proxy for LLM APIs. Sit it between your AI agent and any LLM provider — it automatically compresses conversation context when it approaches the model's token limit, keeping your agents running indefinitely without hitting context window walls.
 
-```
-┌─────────────┐     ┌──────────────────────┐     ┌──────────────┐
-│  AI Agent   │────▶│  Compaction Proxy    │────▶│  LLM Provider│
-│ (Claude/GPT)│◀────│  localhost:8198      │◀────│  (any API)   │
-└─────────────┘     │                      │     └──────────────┘
-                    │  • Monitor context % │
-                    │  • Auto-compress     │
-                    │  • Preserve key info │
-                    │  • Route to provider │
-                    └──────────────────────┘
-```
+**40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
 
-1. **Passthrough** — Requests under the context limit go straight through, zero overhead
-2. **Detect** — When context reaches the threshold (default 80%), compaction triggers
-3. **Compress** — Older messages are summarized using a separate compaction model
-4. **Resume** — The compressed context replaces old messages; the agent continues seamlessly
+---
+
+## ✨ Feature Highlights
+
+### 🧠 Context Compression Engine
+| Feature | Description |
+|---------|-------------|
+| **Preemptive Compaction** | Triggers at 80% context before hitting the limit |
+| **Overflow Recovery** | Compress + retry on context overflow errors |
+| **Incremental Compaction** | Only summarize new messages since last compaction (CoMem) |
+| **Parallel Compaction** | Split large contexts into parallel blocks |
+| **Dual-Layer Compression** | Gateway (85% reduction) + Agent (50% of L1) |
+| **CJK-Aware Token Estimation** | Accurate CJK/ASCII/other token counting |
+| **Compaction Safety Verification** | Compacted result must be smaller than original |
+| **Smart Truncation** | Role-based budget allocation |
+| **Identifier Preservation** | Keep code identifiers intact during compression |
+| **Compaction Cache** | 30-min TTL, avoids re-compressing unchanged context |
+
+### 🗂️ Memory & Session
+| Feature | Description |
+|---------|-------------|
+| **Semantic Memory** | Episodic-semantic dual-layer memory (arXiv:2605.17625) |
+| **Cross-Session Memory + FTS5** | SQLite session persistence with full-text search |
+| **User Profile Memory** | Persistent user preferences (USER.md) |
+| **ARC References** | Replace lengthy tool results with ID references |
+| **Commitment Extraction** | Extract and preserve commitments (CCL) |
+| **Thought Masking** | Strip reasoning_content to save tokens |
+| **Secret Redaction** | Auto-redact API keys/JWT/passwords/tokens |
+
+### 🔌 Provider & Protocol
+| Feature | Description |
+|---------|-------------|
+| **Provider Abstraction Layer** | Universal OpenAI/Anthropic/Gemini compatibility |
+| **Auto Provider Detection** | Detect format from model name / headers / URL |
+| **OpenAI↔Anthropic Conversion** | Bidirectional request/response format conversion |
+| **SSE Streaming Conversion** | Anthropic SSE → OpenAI SSE event-by-event |
+| **Separate Compaction Provider** | Independent upstream & API key for compaction model |
+| **Model Registry** | 67+ models with known context limits |
+
+### 🛡️ Reliability & Security
+| Feature | Description |
+|---------|-------------|
+| **Circuit Breaker** | 3 failures → 60s cooldown, three-state machine |
+| **Thrashing Detection** | Detect compaction loops (3 compacts / 5 msgs) |
+| **Auth (require_auth)** | 22+ endpoints protected; loopback-only when no secret |
+| **Gemini Key via Header** | `x-goog-api-key` header, never in URL/logs |
+| **Concurrency Safety** | Thread-locked semantic memory, race-free prompts |
+| **Pre/Post Compaction Hooks** | HTTP webhooks before/after compaction |
+| **Health & Metrics Endpoints** | `/health`, `/metrics` for monitoring |
+
+### 🤖 MemSkill (Self-Evolving, V7)
+| Feature | Description |
+|---------|-------------|
+| **Skill Registry** | CRUD + activation lifecycle + snapshot rollback |
+| **Skill Controller** | Keyword matching + Gumbel-Top-K selection |
+| **Parameter Override Pipeline** | Importance weights + fidelity multipliers |
+| **DELETE-type Skill Pipeline Skip** | Skip semantic extraction for DELETE operations |
+
+---
 
 ## Quick Start
 
@@ -36,8 +79,8 @@
 
 ```bash
 # Clone
-git clone https://github.com/your-org/llm-compaction-proxy.git
-cd llm-compaction-proxy
+git clone https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy.git
+cd NeverFull-NeverStop-LLM-Context-Compaction-Proxy
 
 # Set your upstream LLM API
 export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1
@@ -67,54 +110,153 @@ systemctl --user daemon-reload
 systemctl --user enable --now compaction-proxy.service
 ```
 
-## Connecting AI Agents
+---
+
+## Connecting Your LLM Provider
+
+The proxy sits between your agent and any LLM API. **One variable decides the upstream**: `COMPACTION_PROXY_UPSTREAM`. Everything else is optional.
+
+### OpenAI / OpenAI-Compatible (OpenAI, DeepSeek, Ollama, vLLM, LiteLLM, OpenRouter, Groq, etc.)
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1
+export COMPACTION_PROXY_MODEL=gpt-4o-mini
+python3 compaction-proxy.py
+```
+
+### Anthropic (Claude)
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://api.anthropic.com
+export COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true
+export COMPACTION_PROXY_MODEL=claude-sonnet-4-5
+python3 compaction-proxy.py
+```
+
+### Google Gemini
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://generativelanguage.googleapis.com
+export COMPACTION_PROXY_MODEL=gemini-2.0-flash
+python3 compaction-proxy.py
+```
+
+### DeepSeek
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://api.deepseek.com/v1
+export COMPACTION_PROXY_MODEL=deepseek-chat
+python3 compaction-proxy.py
+```
+
+### Local Models (Ollama)
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=http://localhost:11434/v1   # default
+export COMPACTION_PROXY_MODEL=llama3.1
+python3 compaction-proxy.py
+```
+
+---
+
+## 🤖 Supported Agents — All Verified
+
+The proxy works with **OpenClaw, Claude Code, Hermes, and DeepSeek Harness** — all verified live. Each keeps running indefinitely because context is compacted by the proxy, never by the agent itself.
+
+### OpenClaw
+
+Point the model provider at the proxy in `openclaw.json`, and enable the `v6-compaction-provider` plugin:
+
+```json
+{
+  "models": {
+    "providers": {
+      "compaction-proxy": {
+        "baseUrl": "http://127.0.0.1:8198",
+        "api": "openai-completions",
+        "models": [{ "id": "xopdeepseekv4flash" }]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "v6-compaction-provider": {
+        "enabled": true,
+        "config": { "proxyUrl": "http://127.0.0.1:8198", "model": "xsparkx2agent" }
+      }
+    }
+  }
+}
+```
+
+**Verified**: OpenClaw's `xunfei` provider already points at `127.0.0.1:8198`; the `v6-compaction-provider` plugin routes `/summarize` through the proxy. OpenClaw's native compaction is disabled (`compaction.enabled=false`) so the proxy owns compression entirely.
 
 ### Claude Code (Anthropic)
 
 ```bash
-# Set the API base to the proxy
 export ANTHROPIC_BASE_URL=http://localhost:8198
 claude
 ```
 
-Or in Claude Code settings:
+Or in `~/.claude/settings.json`:
+
 ```json
 {
-  "apiBaseUrl": "http://localhost:8198"
+  "env": { "ANTHROPIC_BASE_URL": "http://localhost:8198" },
+  "autoCompactEnabled": false
 }
 ```
 
-### OpenAI-Compatible Agents (GPT, DeepSeek, Ollama, vLLM, etc.)
+**Verified**: `POST /v1/messages` routes through the proxy (401 on missing key confirms Anthropic format detection). `autoCompactEnabled: false` disables Claude Code's own compaction.
+
+### Hermes Agent
+
+Edit `~/.hermes/config.yaml`:
+
+```yaml
+model:
+  api_mode: chat_completions          # OpenAI format
+  base_url: http://127.0.0.1:8198/v1  # point at the proxy
+  default: xopglm51                   # any model available upstream
+```
+
+**Verified**: Hermes' `chat_completions` mode is fully compatible with the proxy's `/v1/chat/completions`. Hermes' own compression is disabled (`compression.enabled: false`).
+
+### DeepSeek Harness
+
+Edit `$DSH_HOME/settings.yaml` (default `~/.dsh/settings.yaml`):
+
+```yaml
+llm-pi-ai:
+  providers:
+    xfyun-maas:
+      apiKeyEnv: XF_MASS_API_KEY
+      api: openai-completions           # OpenAI-compatible protocol
+      baseURL: http://127.0.0.1:8198    # point at the proxy
+      models:
+        - id: xsparkx2agent
+          contextWindow: 131072
+          maxTokens: 8192
+```
+
+**Verified**: Harness' `xfyun-maas` provider already points at `127.0.0.1:8198`. Harness' native compaction is disabled via `cordis.patch.yml` (`dsh-compaction-basic` → `auto: false`).
+
+---
+
+## Verify It Works
 
 ```bash
-export OPENAI_BASE_URL=http://localhost:8198/v1
-export OPENAI_API_KEY=your-key
+# Health check
+curl http://localhost:8198/health
+
+# Send a test request through the proxy (OpenAI format)
+curl -X POST http://localhost:8198/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-Works with any agent that uses the OpenAI SDK or compatible API.
-
-### Cursor / Continue / Other IDE Extensions
-
-Set the API base URL in your extension settings:
-- **Cursor**: Settings → Models → OpenAI API Base → `http://localhost:8198/v1`
-- **Continue**: `config.json` → `"apiBase": "http://localhost:8198/v1"`
-
-### Custom Agents (Direct API Call)
-
-```python
-import openai
-
-client = openai.OpenAI(
-    base_url="http://localhost:8198/v1",
-    api_key="your-key"
-)
-
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True
-)
-```
+---
 
 ## Supported Providers
 
@@ -135,79 +277,9 @@ response = client.chat.completions.create(
 
 Set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=auto` (default) for automatic detection, or `true`/`false` to override.
 
-## Connecting Your LLM Provider
+---
 
-The proxy sits between your agent and any LLM API. **One variable decides the upstream**: `COMPACTION_PROXY_UPSTREAM`. Everything else is optional.
-
-### OpenAI / OpenAI-Compatible (OpenAI, DeepSeek, Ollama, vLLM, LiteLLM, OpenRouter, Groq, etc.)
-
-```bash
-export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1      # or any OpenAI-compatible endpoint
-export COMPACTION_PROXY_MODEL=gpt-4o-mini                        # compaction model
-python3 compaction-proxy.py
-```
-
-Works out of the box — the proxy forwards requests and converts the compaction result back to the OpenAI format your agent expects.
-
-### Anthropic (Claude)
-
-```bash
-export COMPACTION_PROXY_UPSTREAM=https://api.anthropic.com
-export COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true
-export COMPACTION_PROXY_MODEL=claude-sonnet-4-5
-python3 compaction-proxy.py
-```
-
-The proxy speaks the Anthropic Messages API (`/v1/messages`), so Anthropic-native agents connect directly. Format conversion is applied automatically for OpenAI-format agents pointing at the same proxy.
-
-### Google Gemini
-
-```bash
-export COMPACTION_PROXY_UPSTREAM=https://generativelanguage.googleapis.com
-export COMPACTION_PROXY_MODEL=gemini-2.0-flash
-python3 compaction-proxy.py
-```
-
-The API key travels in the `x-goog-api-key` header (never in the URL), so it stays out of access logs.
-
-### DeepSeek
-
-```bash
-export COMPACTION_PROXY_UPSTREAM=https://api.deepseek.com/v1
-export COMPACTION_PROXY_MODEL=deepseek-chat
-python3 compaction-proxy.py
-```
-
-DeepSeek context windows (deepseek-chat / coder / r1 / v3, 128K) are pre-registered, so pressure estimation works without extra setup.
-
-### Local Models (Ollama)
-
-```bash
-export COMPACTION_PROXY_UPSTREAM=http://localhost:11434/v1   # default
-export COMPACTION_PROXY_MODEL=llama3.1
-python3 compaction-proxy.py
-```
-
-### Verify It Works
-
-```bash
-# Health check
-curl http://localhost:8198/health
-
-# Send a test request through the proxy (OpenAI format)
-curl -X POST http://localhost:8198/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_KEY" \
-  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
-```
-
-### Tips
-
-- **Compaction model ≠ main model**: set `COMPACTION_PROXY_COMPACTION_UPSTREAM` / `COMPACTION_PROXY_COMPACTION_API_KEY` to use a cheaper model for summarization while your agent uses the main model.
-- **Anthropic-format MaaS proxies** (e.g. iFlytek coding API): set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true` so request conversion is applied.
-- **Never hardcode secrets in config**: use environment variables or the `apiKeyEnv` pattern; the proxy never logs API keys.
-
-## 40 Compression Techniques
+## 40+ Compression Techniques
 
 ### V3 Core (8)
 
@@ -280,6 +352,11 @@ curl -X POST http://localhost:8198/v1/chat/completions \
 | Smart Truncation | Role-based budget allocation |
 | Identifier Preservation | Keep code identifiers intact during compression |
 | Summary Merge | Merge parallel compaction block results |
+| Secret Redaction | Auto-redact API keys in messages |
+| Auth (require_auth) | 22+ endpoints, loopback-only when no secret |
+| Concurrency Safety | Thread-locked memory, race-free prompts |
+
+---
 
 ## Configuration
 
@@ -293,7 +370,6 @@ All settings are environment variables with sensible defaults. See [.env.example
 | `COMPACTION_PROXY_UPSTREAM` | `http://localhost:11434/v1` | Upstream LLM API base URL |
 | `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC` | `auto` | Force Anthropic format (`true`/`false`/`auto`) |
 | `COMPACTION_PROXY_MODEL` | `gpt-4o-mini` | Model for compaction/summarization |
-| `COMPACTION_PROXY_DEFAULT_MODEL` | `gpt-4o-mini` | Default model for requests without one |
 
 ### Compaction Behavior
 
@@ -327,6 +403,8 @@ All settings are environment variables with sensible defaults. See [.env.example
 | `COMPACTION_PROXY_BACKGROUND_SESSIONS` | `3` | Background sessions for parallel compaction |
 | `COMPACTION_PROXY_LLM_MEMORY` | `1` | LLM-based memory extraction |
 | `COMPACTION_PROXY_MEMSKILL` | `0` | Enable self-improving MemSkill |
+
+---
 
 ## Architecture
 
@@ -367,30 +445,19 @@ Original Context (100%)
   Final Context
 ```
 
+---
+
 ## API Compatibility
 
 The proxy is transparent — it forwards all API endpoints and preserves the original request/response format. Your agent doesn't need to know it's there.
 
-### OpenAI Format
+| Format | Endpoints |
+|--------|-----------|
+| OpenAI | `POST /v1/chat/completions`, `POST /v1/models` |
+| Anthropic | `POST /v1/messages`, `POST /v1/messages/count_tokens` |
+| Gemini | `POST /v1beta/models/{model}:generateContent`, `.../streamGenerateContent` |
 
-```
-POST /v1/chat/completions
-POST /v1/models
-```
-
-### Anthropic Format
-
-```
-POST /v1/messages
-POST /v1/messages/count_tokens
-```
-
-### Gemini Format
-
-```
-POST /v1beta/models/{model}:generateContent
-POST /v1beta/models/{model}:streamGenerateContent
-```
+---
 
 ## License
 

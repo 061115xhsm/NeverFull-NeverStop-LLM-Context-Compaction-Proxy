@@ -33,6 +33,185 @@
 \newpage
 
 % ============================================================
+\section{功能亮点}
+% ============================================================
+
+\subsection{上下文压缩引擎}
+
+\begin{longtable}{@{}lp{10cm}@{}}
+  \toprule
+  功能 & 说明 \\
+  \midrule
+  预压缩 & 上下文达 80\% 阈值时提前触发,避免触墙 \\
+  溢出恢复 & 溢出错误时自动压缩并重试 \\
+  增量压缩 & 只摘要自上次压缩后的新增消息(CoMem) \\
+  并行压缩 & 大上下文分块并行压缩 \\
+  双层压缩 & 网关层(85\% 缩减)+ Agent 层(L1 的 50\%) \\
+  CJK 感知 Token 估算 & 精确统计中文/英文/其他字符的 token 数 \\
+  压缩安全验证 & 压缩结果必须小于原文,否则降级截断 \\
+  智能截断 & 基于角色的预算分配 \\
+  标识符保留 & 压缩时保持代码标识符完整 \\
+  压缩缓存 & 30 分钟 TTL,避免重复压缩未变化上下文 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{记忆与会话}
+
+\begin{longtable}{@{}lp{10cm}@{}}
+  \toprule
+  功能 & 说明 \\
+  \midrule
+  语义记忆 & 情节—语义双层记忆(arXiv:2605.17625) \\
+  跨会话记忆 + FTS5 & SQLite 会话持久化 + 全文搜索 \\
+  用户画像记忆 & 持久化用户偏好(USER.md) \\
+  ARC 地址化引用 & 长工具结果替换为 ID 引用,可回查原文 \\
+  承诺提取(CCL) & 提取并保留对话中的目标/约束/决策 \\
+  思考掩码 & 剥离推理内容以节省 token \\
+  密钥脱敏 & 自动脱敏 API Key/JWT/密码/Token \\
+  \bottomrule
+\end{longtable}
+
+\subsection{Provider 与协议}
+
+\begin{longtable}{@{}lp{10cm}@{}}
+  \toprule
+  功能 & 说明 \\
+  \midrule
+  Provider 抽象层 & 通用 OpenAI/Anthropic/Gemini 兼容 \\
+  自动 Provider 探测 & 依据模型名/请求头/URL 自动识别格式 \\
+  OpenAI$\leftrightarrow$Anthropic 转换 & 双向请求/响应格式转换 \\
+  SSE 流式转换 & Anthropic SSE $\rightarrow$ OpenAI SSE 逐事件转换 \\
+  独立压缩 Provider & 压缩模型可使用独立上游与密钥 \\
+  模型注册表 & 67+ 已知上下文窗口的模型 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{可靠性与安全}
+
+\begin{longtable}{@{}lp{10cm}@{}}
+  \toprule
+  功能 & 说明 \\
+  \midrule
+  熔断器 & 3 次失败 $\rightarrow$ 60 秒冷却,三状态机 \\
+  抖动检测 & 检测压缩循环(3 次 / 5 条消息) \\
+  端点认证 & 22+ 端点受保护;无密钥时仅回环放行 \\
+  Gemini 密钥走请求头 & \texttt{x-goog-api-key} header,绝不进 URL/日志 \\
+  并发安全 & 语义记忆线程锁、无竞态提示词 \\
+  压缩前后 Hooks & 压缩前后的 HTTP webhook \\
+  健康与指标端点 & \texttt{/health}、\texttt{/metrics} 监控接口 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{MemSkill(自演进技能,V7)}
+
+\begin{longtable}{@{}lp{10cm}@{}}
+  \toprule
+  功能 & 说明 \\
+  \midrule
+  技能注册表 & CRUD + 激活生命周期 + 快照回滚 \\
+  技能控制器 & 关键词匹配 + Gumbel-Top-K 选择 \\
+  参数覆盖管线 & 重要性权重 + 保真乘数 \\
+  DELETE 型技能管线跳过 & 跳过 DELETE 操作的语义提取 \\
+  \bottomrule
+\end{longtable}
+
+% ============================================================
+\section{支持的 Agent(OpenClaw / Claude Code / Hermes / DeepSeek Harness)}
+% ============================================================
+
+代理已实测兼容 \textbf{OpenClaw、Claude Code、Hermes 与 DeepSeek Harness}
+四大 Agent 框架。接入后上下文压缩完全由代理接管,Agent 自身不再压缩,
+可无限期运行。
+
+\subsection{OpenClaw}
+
+在 \texttt{openclaw.json} 中将模型 provider 指向代理,并启用
+\texttt{v6-compaction-provider} 插件:
+
+\begin{lstlisting}[language={}]
+{
+  "models": {
+    "providers": {
+      "compaction-proxy": {
+        "baseUrl": "http://127.0.0.1:8198",
+        "api": "openai-completions",
+        "models": [{ "id": "xopdeepseekv4flash" }]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "v6-compaction-provider": {
+        "enabled": true,
+        "config": { "proxyUrl": "http://127.0.0.1:8198", "model": "xsparkx2agent" }
+      }
+    }
+  }
+}
+\end{lstlisting}
+
+已验证:OpenClaw 的 \texttt{xunfei} provider 已指向 \texttt{127.0.0.1:8198},
+\texttt{v6-compaction-provider} 插件经 \texttt{/summarize} 走代理;
+OpenClaw 原生 compaction 已关闭(\texttt{compaction.enabled=false}),
+压缩完全由代理接管。
+
+\subsection{Claude Code(Anthropic)}
+
+\begin{lstlisting}
+export ANTHROPIC_BASE_URL=http://localhost:8198
+claude
+\end{lstlisting}
+
+或在 \texttt{\~/.claude/settings.json} 中:
+
+\begin{lstlisting}[language={}]
+{
+  "env": { "ANTHROPIC_BASE_URL": "http://localhost:8198" },
+  "autoCompactEnabled": false
+}
+\end{lstlisting}
+
+已验证:\texttt{POST /v1/messages} 经代理路由(缺 key 返回 401 证明
+Anthropic 格式识别成功);\texttt{autoCompactEnabled: false} 关闭
+Claude Code 自带压缩。
+
+\subsection{Hermes Agent}
+
+编辑 \texttt{\~/.hermes/config.yaml}:
+
+\begin{lstlisting}[language={}]
+model:
+  api_mode: chat_completions          # OpenAI 格式
+  base_url: http://127.0.0.1:8198/v1  # 指向代理
+  default: xopglm51                   # 上游可用模型均可
+\end{lstlisting}
+
+已验证:Hermes 的 \texttt{chat\_completions} 模式与代理
+\texttt{/v1/chat/completions} 完全兼容;Hermes 自带压缩已关闭
+(\texttt{compression.enabled: false})。
+
+\subsection{DeepSeek Harness}
+
+编辑 \texttt{\$DSH\_HOME/settings.yaml}(默认 \texttt{\~/.dsh/settings.yaml}):
+
+\begin{lstlisting}[language={}]
+llm-pi-ai:
+  providers:
+    xfyun-maas:
+      apiKeyEnv: XF_MASS_API_KEY
+      api: openai-completions           # OpenAI 兼容协议
+      baseURL: http://127.0.0.1:8198    # 指向代理
+      models:
+        - id: xsparkx2agent
+          contextWindow: 131072
+          maxTokens: 8192
+\end{lstlisting}
+
+已验证:Harness 的 \texttt{xfyun-maas} provider 已指向
+\texttt{127.0.0.1:8198};Harness 原生压缩经 \texttt{cordis.patch.yml}
+关闭(\texttt{dsh-compaction-basic} $\rightarrow$ \texttt{auto: false})。
+
+% ============================================================
 \section{引言}
 % ============================================================
 
