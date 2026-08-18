@@ -267,204 +267,68 @@ llm-pi-ai:
 关闭(\texttt{dsh-compaction-basic} $\rightarrow$ \texttt{auto: false})。
 
 % ============================================================
-\section{引言}
-% ============================================================
-
-在开源项目的世界里,一份出色的 README 文件就像是一座灯塔,指引着初次来访的
-开发者与用户了解项目的核心价值和使用方法。正如 Antoine de Saint-Exupéry
-在《小王子》中所说:\emph{``人们只有用心去看,才能看到真实。
-事物的真实本质是肉眼无法看到的。''}
-
-\subsection{为什么 README 是重要的}
-
-README 不仅是项目的入口,更是项目的名片。它向访问者展示了项目的目标、
-功能和使用方法。一份详尽、清晰的 README 能够帮助开发者快速理解项目的
-价值和用途,从而决定是否要使用或参与该项目。
-
-在《代码大全》(Code Complete)中,Steve McConnell 强调了清晰、准确的文档
-对于软件开发的重要性。他指出,良好的文档能够帮助开发者避免很多不必要的
-错误和困惑,提高工作效率。
-
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}lp{9cm}@{}}
-    \toprule
-    优点 & 描述 \\
-    \midrule
-    可读性 & README 提供了清晰、简洁的项目信息,帮助开发者快速了解项目。 \\
-    可接入性 & 通过详细的安装和使用说明,使得用户能够轻松地开始使用项目。 \\
-    可维护性 & 为贡献者提供了明确的指南和文档,方便项目的维护和扩展。 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\subsection{README 的主要组成部分}
-
-一份完整的 README 通常包括项目标题、描述、安装指南、使用示例、贡献指南、
-许可证等部分。每一部分都是为了让读者更全面、深入地了解项目。
-
-在《人月神话》(The Mythical Man-Month)中,Fred Brooks 提到:
-\emph{``良好的文档是软件产品成功的关键。''}他强调,文档不仅是为了解释代码
-的功能,更是为了传达开发者的思维和设计理念。
-
-\subsubsection{项目标题和描述}
-
-项目的标题和描述是 README 的核心部分,它简洁明了地传达了项目的主要目的
-和功能。一个好的标题能够快速吸引读者的注意力,而一个清晰的描述能够帮助
-读者理解项目的用途和价值。
-
-\subsubsection{安装和使用说明}
-
-这一部分提供了详细的步骤,指导读者如何安装和使用项目。它应该包括所有必要
-的命令、脚本和其他相关信息,以确保读者能够顺利地运行和使用项目。
-
-\subsubsection{贡献指南和许可证}
-
-贡献指南帮助潜在的贡献者了解如何参与项目,而许可证则明确了项目的使用和
-分发条件。这两部分是开源项目不可或缺的组成部分,它们保护了作者的权益,
-也指明了用户和贡献者的权利和责任。
-
-% ============================================================
-\section{项目标题和描述}
-% ============================================================
-
-在开源项目中,一个吸引人的标题和清晰的描述是至关重要的。它不仅是项目的
-第一印象,也是决定人们是否继续阅读和探索的关键因素。
-
-\subsection{如何选择一个有吸引力的标题}
-
-一个好的标题应该是简洁、明确和具有吸引力的。它需要准确地传达项目的主要
-功能或特点,同时激发读者的兴趣和好奇心。正如《代码大全》中所说:
-\emph{``好的代码是自解释的。''}一个好的标题也应该是自解释的,能够快速
-告诉读者这个项目是关于什么的。
-
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}lp{4.5cm}p{5.5cm}@{}}
-    \toprule
-    特点 & 好的标题 & 不好的标题 \\
-    \midrule
-    简洁性 & LLM Compaction Proxy & 一个基于 Python 的上下文压缩代理 \\
-    明确性 & Context Compaction Proxy & 压缩项目 \\
-    吸引力 & CompactionProxy: 让上下文永不超限 & 上下文项目 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\subsection{如何写一个简洁明了的项目描述}
-
-项目描述是对标题的扩展和补充,它提供了关于项目的更多细节。一个好的项目
-描述应该简洁明了,但也足够详细,能够帮助读者快速理解项目的用途、功能和
-优势。
-
-例如,本项目(LLM Context Compaction Proxy)的描述可以是:
-\emph{``LLM Context Compaction Proxy 是一个透明、零配置的 LLM API 上下文
-压缩代理。它位于 AI Agent 与任意 LLM 提供商之间,当对话上下文逼近模型
-token 上限时,自动压缩对话历史,使 Agent 无限期运行而不触碰上下文窗口墙。
-''}
-
-\subsubsection{描述的关键元素}
-
-\begin{itemize}
-  \item \textbf{简洁性}:保持描述简洁,避免冗余和复杂的术语;
-  \item \textbf{明确性}:清晰地表达项目的主要功能和优势;
-  \item \textbf{具体性}:提供具体的例子和用途,帮助读者更好地理解项目。
-\end{itemize}
-
-一个好的描述能够让读者在短时间内快速把握项目的核心价值和功能。正如
-《人月神话》中所说:\emph{``在好的设计中,复杂的事物被简化。''}一个好的
-项目描述也应该追求这种简洁和明确,使读者能够快速理解和使用。
-
-% ============================================================
 \section{安装和使用说明}
 % ============================================================
 
-在开源项目中,一个清晰、简洁的安装和使用说明是至关重要的。它不仅帮助用户
-快速理解如何开始,也减少了他们在安装和使用过程中可能遇到的困惑和挫败感。
+\subsection{前置条件}
 
-\subsection{提供详细的安装步骤}
+\begin{itemize}
+  \item Python 3.10+
+  \item \texttt{aiohttp}(\texttt{pip install aiohttp})
+\end{itemize}
 
-首先,我们需要提供一个详细的步骤说明,让用户能够轻松地安装和配置项目。
+\subsection{安装步骤}
 
-\begin{enumerate}[leftmargin=2em]
-  \item \textbf{克隆仓库}:从 GitHub 或其他代码托管平台克隆项目到本地:
+\textbf{1. 克隆仓库}
+
 \begin{lstlisting}
-git clone https://github.com/061115xhsm/llm-compaction-proxy.git
-cd llm-compaction-proxy
+git clone https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy.git
+cd NeverFull-NeverStop-LLM-Context-Compaction-Proxy
 \end{lstlisting}
 
-  \item \textbf{安装依赖}:项目所需依赖为 \texttt{aiohttp}(Python 3.10+):
+\textbf{2. 安装依赖}
+
 \begin{lstlisting}
 pip install aiohttp
 \end{lstlisting}
 
-  \item \textbf{配置上游并运行}:设置上游 LLM API 地址与压缩模型,启动代理:
+\textbf{3. 配置上游并运行}
+
 \begin{lstlisting}
 export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1
 export COMPACTION_PROXY_MODEL=gpt-4o-mini
 python3 compaction-proxy.py
 \end{lstlisting}
-\end{enumerate}
 
 代理监听在 \texttt{localhost:8198}。将 Agent 的 API 端点指向此处即可。
 
-正如《C++编程思想》中所说:\emph{``代码的清晰是优秀软件的基石。''}
-清晰的安装步骤同样是优秀文档的基石。
+\subsection{接入你的 LLM 提供商}
 
-\subsection{用户如何使用你的项目}
+\begin{longtable}{@{}lp{9cm}@{}}
+  \toprule
+  提供商 & 配置 \\
+  \midrule
+  OpenAI / 兼容系 & \texttt{export COMPACTION\_PROXY\_UPSTREAM=https://api.openai.com/v1} \\
+  Anthropic & \texttt{.../api.anthropic.com} + \texttt{UPSTREAM\_IS\_ANTHROPIC=true} \\
+  Gemini & \texttt{.../generativelanguage.googleapis.com} \\
+  DeepSeek & \texttt{.../api.deepseek.com/v1} \\
+  Ollama(本地) & \texttt{http://localhost:11434/v1}(默认) \\
+  \bottomrule
+\end{longtable}
 
-在这一部分,我们需要详细说明如何使用项目,可以通过提供具体的使用场景和
-示例来帮助用户理解。例如,将 Claude Code 指向代理:
-
-\begin{lstlisting}
-export ANTHROPIC_BASE_URL=http://localhost:8198
-claude
-\end{lstlisting}
-
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}lp{5cm}p{6cm}@{}}
-    \toprule
-    使用场景 & 示例代码 & 说明 \\
-    \midrule
-    Claude Code & \texttt{export ANTHROPIC\_BASE\_URL=http://localhost:8198} & 将 Anthropic 请求路由至代理 \\
-    OpenAI 兼容 Agent & \texttt{export OPENAI\_BASE\_URL=http://localhost:8198/v1} & 将 OpenAI 请求路由至代理 \\
-    DeepSeek & \texttt{export COMPACTION\_PROXY\_UPSTREAM=https://api.deepseek.com/v1} & 以 DeepSeek 为上游 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-在这里,我们可以引用《代码大全》中的一句话:\emph{``代码是给人看的,只是
-恰好机器也能执行。''}这意味着我们写的代码和文档,首先是为了方便其他开发者
-阅读和理解。
-
-\subsection{提供帮助和支持}
-
-最后,我们需要提供一个渠道,让用户在遇到问题时能够获得帮助和支持。
+\subsection{帮助与支持}
 
 \begin{itemize}
   \item \textbf{问题追踪}:GitHub Issues
   \item \textbf{健康检查}:\texttt{curl http://localhost:8198/health}
-  \item \textbf{文档}:仓库内的 \texttt{README.tex} 与
-        \texttt{docs/technical-document.tex}
+  \item \textbf{文档}:仓库内的 \texttt{README.tex} 与 \texttt{docs/technical-document.tex}
 \end{itemize}
-
-在这一部分,我们可以引用 Donald Knuth 在《计算机程序设计艺术》中的名言:
-\emph{``程序是为人类读写的,不是为机器执行的。''}这强调了我们在编写代码
-和文档时,应该始终考虑到人的因素,使其易于理解和使用。
 
 % ============================================================
 \section{示例和代码片段}
 % ============================================================
 
-\subsection{提供使用示例}
-
-在开源项目中,一个清晰、直观的使用示例能帮助用户快速理解项目的用途和功能。
-本项目的核心用法是:将代理置于 Agent 与 LLM 之间,自动处理上下文压缩。
-
-\subsubsection{Python SDK 示例}
-
-以下是一个简单的示例,展示如何通过 OpenAI SDK 经代理调用模型:
+\subsection{Python SDK 示例}
 
 \begin{lstlisting}[language=Python]
 import openai
@@ -481,12 +345,10 @@ response = client.chat.completions.create(
 )
 \end{lstlisting}
 
-在这个示例中,我们首先创建了一个指向 \texttt{localhost:8198/v1} 的
-OpenAI 客户端,然后调用 \texttt{chat.completions.create()} 发送一条消息,
-最后以流式方式读取响应。正如《C++编程思想》中所说:\emph{``代码是最好的
-教程。''}这个简单的示例代码能帮助用户快速上手。
+创建指向 \texttt{localhost:8198/v1} 的 OpenAI 客户端,调用
+\texttt{chat.completions.create()} 发送消息并以流式方式读取响应。
 
-\subsubsection{验证代理是否生效}
+\subsection{验证代理是否生效}
 
 \begin{lstlisting}
 # Health check
@@ -499,247 +361,118 @@ curl -X POST http://localhost:8198/v1/chat/completions \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
 \end{lstlisting}
 
-正如《算法导论》中所说:\emph{``一个好的算法,应该能够应对各种情况。''}
-这个示例不仅展示了如何使用代理,也体现了其灵活性和实用性。
-
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}lp{8cm}@{}}
-    \toprule
-    方面 & 说明 \\
-    \midrule
-    代码清晰度 & 代码应该是易读和易理解的,变量和函数的命名应该清晰表达其用途和功能。 \\
-    示例的实用性 & 示例应该是实用的,展示项目的核心功能和特点。 \\
-    用户友好性 & 代码和示例应该考虑用户的需求和经验,易于上手和使用。 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-通过这种方式,我们可以确保用户能够快速、有效地理解和使用本项目。
-
 % ============================================================
 \section{项目结构和文件组织}
 % ============================================================
 
-在开源项目中,一个清晰、有序的项目结构和文件组织是至关重要的。它不仅能
-帮助开发者快速理解和参与项目,也能使用户更容易地使用和贡献项目。
+\begin{longtable}{@{}llp{6.5cm}@{}}
+  \toprule
+  文件/目录 & 描述 & 用途 \\
+  \midrule
+  \texttt{compaction-proxy.py} & 主程序 & 代理的全部核心逻辑 \\
+  \texttt{README.md} / \texttt{README.tex} & 项目说明 & 使用指南与文档 \\
+  \texttt{README-zh.md} / \texttt{README-zh.tex} & 中文说明 & 中文使用指南 \\
+  \texttt{docs/} & 文档目录 & 技术文档与接入指南 \\
+  \texttt{.env.example} & 配置模板 & 环境变量配置示例 \\
+  \texttt{systemd/} & 服务模板 & systemd 用户服务单元 \\
+  \texttt{LICENSE} & 许可证 & MIT 许可证文本 \\
+  \bottomrule
+\end{longtable}
 
-\subsection{说明项目的文件和目录结构}
+\subsection{主程序(\texttt{compaction-proxy.py})}
 
-一个项目的文件和目录结构应该是直观和自解释的。每个文件和目录都应有其特定
-的目的和功能。正如《代码大全》中所说:\emph{``一个好的目录结构可以帮助
-开发者快速地找到他们需要的信息,从而提高生产效率。''}
+包含代理的全部核心逻辑:Provider 抽象层(OpenAI/Anthropic/Gemini)、压缩引擎、
+语义记忆、会话存储、技能注册表、熔断器与抖动检测等。代码按模块化组织,
+每个类与函数职责单一。
 
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}lp{5cm}p{7cm}@{}}
-    \toprule
-    文件/目录 & 描述 & 用途 \\
-    \midrule
-    \texttt{compaction-proxy.py} & 主程序 & 代理的全部核心逻辑 \\
-    \texttt{README.md} / \texttt{README.tex} & 项目说明 & 使用指南与文档 \\
-    \texttt{docs/} & 文档目录 & 技术文档与接入指南 \\
-    \texttt{.env.example} & 配置模板 & 环境变量配置示例 \\
-    \texttt{systemd/} & 服务模板 & systemd 用户服务单元 \\
-    \texttt{LICENSE} & 许可证 & MIT 许可证文本 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
+\subsection{文档目录(\texttt{docs/})}
 
-\subsection{描述各个文件和目录的用途}
+包含技术文档与接入指南,帮助用户和开发者理解与使用项目。
 
-\subsubsection{主程序(\texttt{compaction-proxy.py})}
+\subsection{测试与配置}
 
-主程序包含代理的全部核心逻辑:Provider 抽象层(OpenAI/Anthropic/Gemini)、
-压缩引擎、语义记忆、会话存储、技能注册表、熔断器与抖动检测等。代码按
-模块化组织,每个类与函数职责单一。
-
-\subsubsection{文档目录(\texttt{docs/})}
-
-文档是项目的灵魂,一个完备的文档目录应包含用户手册、API 文档、开发者指南
-等。这些文档能帮助用户和开发者更好地理解和使用项目。
-
-正如《程序员的自我修养》中所说:\emph{``良好的文档是软件质量的保证,也是
-开发者与用户沟通的桥梁。''}
-
-\subsubsection{测试与配置}
-
-项目通过 \texttt{.env.example} 提供完整的配置模板,并通过
-\texttt{systemd/compaction-proxy.service} 提供系统服务化部署模板,
-方便生产环境使用。
-
-在人的思维和存在中,组织和结构是一种常见的现象。我们的思维、行为和生活
-都有其内在的结构和组织。在项目管理和代码组织中,这种结构化思维的运用能
-帮助我们更高效、更有条理地完成任务,实现目标。
+\texttt{.env.example} 提供完整配置模板,\texttt{systemd/compaction-proxy.service}
+提供系统服务化部署模板,方便生产环境使用。
 
 % ============================================================
 \section{贡献指南}
 % ============================================================
 
-在开源项目中,贡献者的参与是项目能够持续进步和发展的关键。本章节将详细
-介绍如何为项目做出贡献,以及提交问题和拉取请求的流程。
+贡献开源项目不仅包括代码,还包括文档更新、问题报告、新功能建议等。
 
-\subsection{如何为项目做出贡献}
-
-贡献开源项目不仅仅是代码的贡献,还包括文档更新、问题报告、新功能建议等。
-正如《人月神话》中所说:\emph{``好的程序员不仅仅是写出能工作的代码,还
-需要写出能维护的代码。''}这本书强调了代码质量和维护性的重要性。
+\subsection{贡献流程}
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{了解项目}:阅读项目的文档和代码,了解项目的目标、架构和
-        设计原则;参与项目的讨论和会议,与项目成员交流;
-  \item \textbf{找到贡献的机会}:查看项目的问题跟踪器,找到你可以解决的
-        问题;注意项目的未来计划和里程碑,看看哪些功能你可以贡献;
-  \item \textbf{贡献代码}:Fork 项目到你的 GitHub 账户;在本地开发和测试
-        你的代码;提交 Pull Request。
+  \item \textbf{了解项目}:阅读文档和代码,了解项目的目标、架构和设计原则;
+  \item \textbf{找到贡献机会}:查看问题跟踪器,找到可解决的问题;关注未来计划与里程碑;
+  \item \textbf{贡献代码}:Fork 项目 $\rightarrow$ 本地开发测试 $\rightarrow$ 提交 Pull Request。
 \end{enumerate}
 
-\subsubsection{提交代码的标准}
+\subsection{提交代码的标准}
 
 \begin{itemize}
   \item 代码必须符合项目的编码标准和风格指南;
   \item 提交的代码必须通过所有测试;
-  \item 代码应该包含单元测试,确保功能的正确性。
+  \item 代码应包含单元测试,确保功能的正确性。
 \end{itemize}
 
-\subsection{提交问题和拉取请求的流程}
+\subsection{提交问题与拉取请求}
 
-提交问题和拉取请求是开源贡献的常见形式。下面是一个简单的流程,帮助贡献者
-有效地提交问题和拉取请求。
-
-\begin{enumerate}[leftmargin=2em]
-  \item \textbf{提交问题}:使用明确、具体的标题描述问题;提供问题的详细
-        描述,包括重现步骤、预期行为和实际行为;如果可能,附加屏幕截图或
-        动画来说明问题;
-  \item \textbf{提交拉取请求}:使用清晰的标题描述拉取请求的目的;在描述中
-        详细说明你的更改和这些更改的必要性;确保你的代码符合项目的编码
-        标准和风格指南。
-\end{enumerate}
-
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}lp{5.5cm}p{6cm}@{}}
-    \toprule
-    方面 & 提交问题 & 提交拉取请求 \\
-    \midrule
-    标题 & 明确、具体 & 清晰、描述目的 \\
-    描述 & 详细、包含重现步骤 & 详细、解释更改的必要性 \\
-    附加信息 & 屏幕截图、动画 & 符合编码和风格标准 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-在《代码大全》中,作者强调了代码质量和可读性的重要性,他说:
-\emph{``代码是写给人看的,顺便给机器执行。''}这句话提醒我们,编写代码时
-不仅要考虑机器,还要考虑未来阅读和维护代码的人。
+\begin{longtable}{@{}lp{5.5cm}p{6cm}@{}}
+  \toprule
+  方面 & 提交问题 & 提交拉取请求 \\
+  \midrule
+  标题 & 明确、具体 & 清晰、描述目的 \\
+  描述 & 详细、包含重现步骤 & 详细、解释更改的必要性 \\
+  附加信息 & 屏幕截图、动画 & 符合编码和风格标准 \\
+  \bottomrule
+\end{longtable}
 
 % ============================================================
 \section{许可证}
 % ============================================================
 
-在开源项目中,选择合适的许可证是至关重要的一步。许可证不仅定义了其他人
-可以如何使用、修改和分发你的项目,还表达了项目所有者对于这些活动的态度
-和限制。
-
-\subsection{选择合适的开源许可证}
-
-选择许可证时,需要考虑项目的性质、目标受众以及你希望与社区的互动方式。
-例如,MIT 许可证(MIT License)允许他人自由使用、修改和分发你的代码,
-只要他们包含原始许可证和版权声明。
-
 本项目采用 \textbf{MIT License},详见仓库根目录的 \texttt{LICENSE} 文件。
 
-正如 Richard Stallman 在《自由软件,自由社会》(Free Software, Free
-Society) 中所说:\emph{``自由软件是关于自由和合作。''}这意味着选择一个
-许可证,也是在选择一个合作和分享的方式。
+MIT 许可证允许他人自由使用、修改和分发你的代码,只要他们包含原始许可证
+和版权声明。
 
-\subsection{如何将许可证添加到你的项目中}
+\subsection{许可证的类型}
 
-\begin{table}[h]
-  \centering
-  \begin{tabular}{@{}cp{5.5cm}p{6cm}@{}}
-    \toprule
-    步骤 & 中文描述 & 英文描述 \\
-    \midrule
-    1 & 选择合适的许可证 & Choose an appropriate license \\
-    2 & 复制许可证文本 & Copy the license text \\
-    3 & 创建名为 \texttt{LICENSE} 的文件 & Create a file named ``LICENSE'' \\
-    4 & 将许可证文本粘贴到文件中 & Paste the license text into the file \\
-    5 & 提交和推送更改 & Commit and push the changes \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-在这个过程中,我们不仅是在遵循一个形式和规范,更是在建立一个开放和自由的
-知识共享平台。正如 Immanuel Kant 在《纯粹理性批判》(Critique of Pure
-Reason) 中所说:\emph{``知识的自由分享是推动人类进步的重要力量。''}这也
-反映在我们选择和使用开源许可证的过程中。
-
-\subsubsection{许可证的类型和选择}
-
-有多种类型的开源许可证,每种都有其特定的使用场景和限制。例如,GNU
-General Public License (GPL) 要求任何使用、修改或分发该许可证下代码的人
-都必须将其更改公开,并使用相同的许可证。
-
-在这个世界上,知识和自由是相辅相成的。我们通过分享知识来实现自由,通过
-自由来推动知识的进步。在这个过程中,开源许可证扮演着桥梁和纽带的角色,
-连接着每一个热爱学习和分享的人。
+\begin{itemize}
+  \item \textbf{MIT License}:宽松许可,允许自由使用/修改/分发,保留版权声明即可;
+  \item \textbf{GNU GPL}:要求使用、修改或分发该许可证下代码的人都必须将其更改公开,
+        并使用相同许可证。
+\end{itemize}
 
 % ============================================================
 \section{联系信息和致谢}
 % ============================================================
 
-\subsection{提供你的联系信息}
+\subsection{联系信息}
 
-在开源项目中,提供清晰的联系信息是非常重要的。这不仅方便其他开发者与你
-交流,还有助于建立一个活跃、开放和友好的社区氛围。你可以通过 GitHub
-Issue 与我们联系,或在项目仓库的 Discussions 中发起讨论。
+如果你有任何问题或建议,请随时通过 GitHub Issue 与我们联系,或在项目仓库
+的 Discussions 中发起讨论。
 
-例如,你可以写:\emph{``如果你有任何问题或建议,请随时通过 GitHub Issue
-与我们联系。''}
-
-\subsection{致谢和表达对贡献者的感激}
-
-每一个成功的开源项目背后,都有一个支持和贡献的社区。在这一部分,你可以
-表达对那些帮助项目成长的人的感激之情。正如《人类简史》中所说:
-\emph{``合作是人类成功的秘诀。''}
-
-\subsubsection{表达感激}
+\subsection{致谢}
 
 感谢所有为本项目贡献过代码、文档、测试与建议的开发者与用户。你的每一次
 提交、每一个 Issue、每一条评论,都在推动这个项目向前。
 
-\subsubsection{社区文化}
+\subsection{社区文化}
 
-建立一个积极、支持和友好的社区文化是非常重要的。你可以分享一些关于如何
-给予和接受帮助的经验和见解,以鼓励更多的人参与到项目中来。
-
-例如,你可以写:\emph{``我们欢迎每一个人的参与和贡献,无论你的技能水平
-如何,都有你的一席之地。''}
-
-这种开放和包容的态度,正如《自私的基因》中所说:\emph{``生物体是由基因
-构建的生存机器。''}在这里,每个人都是项目成功的一部分,每个人都有其
-独特的价值和作用。
+我们欢迎每一个人的参与和贡献,无论你的技能水平如何,都有你的一席之地。
 
 % ============================================================
 \section*{结语}
 % ============================================================
 
-在我们的编程学习之旅中,理解是我们迈向更高层次的重要一步。然而,掌握新
-技能、新理念,始终需要时间和坚持。从心理学的角度看,学习往往伴随着不断
-的试错和调整,这就像是我们的大脑在逐渐优化其解决问题的``算法''。
-
-这就是为什么当我们遇到错误,我们应该将其视为学习和进步的机会,而不仅仅是
-困扰。通过理解和解决这些问题,我们不仅可以修复当前的代码,更可以提升我们
-的编程能力,防止在未来的项目中犯相同的错误。
-
-LLM Context Compaction Proxy 正是这样一段探索之旅的产物:从研究论文中的
-压缩技术,到生产环境中的工程实践;从解决自己的上下文超限之痛,到帮助更多
-开发者的 Agent 无限期运行。愿这份中文指南能成为你的灯塔,指引你在上下文
-压缩的世界里,找到属于自己的路径。
+LLM Context Compaction Proxy 是一段探索之旅的产物:从研究论文中的压缩技术,
+到生产环境中的工程实践;从解决自己的上下文超限之痛,到帮助更多开发者的
+Agent 无限期运行。愿这份中文指南能成为你的灯塔,指引你在上下文压缩的世界里,
+找到属于自己的路径。
 
 \vspace{1em}
 \noindent \emph{—— LLM Context Compaction Proxy Contributors}
 
 \end{document}
-
