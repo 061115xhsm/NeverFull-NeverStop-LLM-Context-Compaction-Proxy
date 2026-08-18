@@ -4,9 +4,20 @@
 
 **Read this in other languages:** [简体中文](https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy/blob/main/README-zh.md)
 
-A transparent, zero-config context compaction proxy for LLM APIs. Sit it between your AI agent and any LLM provider — it automatically compresses conversation context when it approaches the model's token limit, keeping your agents running indefinitely without hitting context window walls.
+<!-- badges -->
+<p align="center">
+  <a href="https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy/stargazers"><img src="https://img.shields.io/github/stars/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy" alt="GitHub Stars"></a>
+  <a href="https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy/releases"><img src="https://img.shields.io/github/v/release/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy" alt="Release"></a>
+  <a href="https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy/blob/main/LICENSE"><img src="https://img.shields.io/github/license/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/Python-3.10+-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/status-beta-yellow" alt="Beta">
+</p>
 
-**40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
+**Solve context window overflow once and for all.** A transparent, zero-config LLM context management proxy that sits between your AI agent and any LLM provider. When conversation context approaches the model's token limit, it **auto-compresses chat history** so your long-context agent keeps running indefinitely — no more hitting context window walls, no more losing the thread.
+
+**Built for long-context agents:** OpenClaw · Claude Code · Hermes · DeepSeek Harness — all verified integrations included.
+
+**40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).**
 
 ---
 
