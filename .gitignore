@@ -40,3 +40,8 @@ Thumbs.db
 *.toc
 *.synctex.gz
 README.pdf
+
+# Local backups
+*.bak-v6
+*.bak-pre-shield
+

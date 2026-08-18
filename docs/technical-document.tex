@@ -1,0 +1,593 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[UTF8]{ctex}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  language=bash
+}
+
+\title{\textbf{LLM Context Compaction Proxy\\技术文档}}
+\author{LLM Context Compaction Proxy Contributors}
+\date{2026 年 8 月}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{概述}
+% ============================================================
+
+LLM Context Compaction Proxy 是一个部署在 AI Agent 与 LLM API 之间的透明上下文压缩代理。
+当对话上下文逼近模型上下文窗口上限时,它自动压缩历史消息并重试,
+使 Agent 能够长时间运行而不触碰上下文窗口墙。
+
+代理累计实现 \textbf{33 项压缩技术},横跨 7 代演进
+(V3 核心、V4 增强、V5 会话、V6 Provider、V7 MemSkill),
+技术来源涵盖学术论文(ARC、AFM、PACMS、CoMem、MemSkill)与
+生产实践(Cursor、Devin、SWE-agent、Hermes、Claude Code)。
+
+\subsection{工作原理}
+
+\begin{verbatim}
+┌─────────────┐     ┌──────────────────────┐     ┌──────────────┐
+│  AI Agent   │────▶│  Compaction Proxy    │────▶│  LLM Provider│
+│ (Claude/GPT)│◀────│  localhost:8198      │◀────│  (any API)   │
+└─────────────┘     │                      │     └──────────────┘
+                    │  • Monitor context % │
+                    │  • Auto-compress     │
+                    │  • Preserve key info │
+                    │  • Route to provider │
+                    └──────────────────────┘
+\end{verbatim}
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{透传(Passthrough)}——上下文未达阈值时请求零开销直达上游;
+  \item \textbf{检测(Detect)}——上下文达到阈值(默认 80\%)时触发压缩;
+  \item \textbf{压缩(Compress)}——使用独立的压缩模型对旧消息生成摘要;
+  \item \textbf{恢复(Resume)}——压缩结果替换旧消息,Agent 无缝继续。
+\end{enumerate}
+
+\subsection{环境要求}
+
+\begin{itemize}
+  \item Python 3.10+
+  \item \texttt{aiohttp} (\texttt{pip install aiohttp})
+  \item 上游 LLM API(OpenAI / Anthropic / Gemini / DeepSeek / Ollama 等)
+\end{itemize}
+
+% ============================================================
+\section{架构设计}
+% ============================================================
+
+\subsection{请求流程}
+
+\begin{verbatim}
+Request Flow:
+  Agent → Proxy → [context check] → Upstream
+                         │
+                    if > 80% full:
+                         │
+                    ┌────▼────┐
+                    │ Compact │──▶ Compaction Model (separate provider)
+                    │ Engine  │◀── Compressed Summary
+                    └────┬────┘
+                         │
+                    Replace old messages
+                    with compressed summary
+                         │
+                         ▼
+                    → Upstream (with compacted context)
+\end{verbatim}
+
+\subsection{模块划分}
+
+\begin{itemize}
+  \item \textbf{Provider 抽象层}:OpenAI / Anthropic / Gemini 三大 API 格式的统一适配,
+        自动探测请求来源与上游格式;
+  \item \textbf{压缩引擎}:可插拔架构,内置默认引擎与双引擎(Dual-Layer);
+  \item \textbf{记忆系统}:语义记忆(SemanticMemory)、跨会话存储(SessionStore, SQLite+FTS5)、
+        用户画像(UserProfile);
+  \item \textbf{技能系统}(V7):技能注册表(SkillRegistry)、技能控制器(SkillController)、
+        自演进记忆技能(MemSkill);
+  \item \textbf{可靠性组件}:熔断器(CircuitBreaker)、抖动检测(ThrashingDetector)、
+        压缩缓存(CompactionCache)、指标系统(Metrics)。
+\end{itemize}
+
+% ============================================================
+\section{压缩技术栈}
+% ============================================================
+
+\subsection{V3 核心技术(8 项)}
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{@{}clp{9cm}@{}}
+    \toprule
+    \# & 技术 & 说明 \\
+    \midrule
+    1  & ARC 地址化引用 & 以紧凑的 \texttt{@ref} 指针替换重复内容 \\
+    2  & AFM 自适应保真 & 消息级 Full/Compressed/Placeholder 三级保真 \\
+    3  & PACMS 子模选择 & 贪心、保真感知的消息选择 \\
+    4  & CCL 承诺提取 & 提取并保留对话中的承诺 \\
+    5  & 抖动检测 & 检测压缩循环(3 次/5 条消息) \\
+    6  & 两阶段 Token 估算 & CJK 感知的精确计数 \\
+    7  & 预飞安全验证 & 发送前验证上下文合法性 \\
+    8  & 并行压缩 & 大上下文分块并行压缩 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{V4 增强技术(10 项)}
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{@{}clp{8cm}@{}}
+    \toprule
+    \# & 技术 & 来源 \\
+    \midrule
+    9  & 情节—语义双层记忆 & arXiv:2605.17625 \\
+    10 & 思考掩码 & Kevin-32B / Devin 模式 \\
+    11 & 标签选择性保留 & SWE-agent / memor-ai \\
+    12 & 结构感知工具输出压缩 & memor-ai \\
+    13 & 密钥脱敏 & Cursor / memor-ai \\
+    14 & 缓存优化消息排序 & 层哈希感知 + \texttt{cache\_control} 断点 \\
+    15 & 增量压缩 & CoMem (arXiv:2605.30842) \\
+    16 & 四信号记忆评分 & 语义 50\%、近因 25\%、类型 15\%、质量 10\% \\
+    17 & 查询位置优化 & 查询置尾、配对邻接、近期窗口 \\
+    18 & 压缩项剪枝 & OpenAI 模式 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\newpage
+% ============================================================
+\section{配置说明}
+% ============================================================
+
+所有配置均通过环境变量提供,默认值见下表。
+
+\subsection{核心配置}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_PORT} & \texttt{8198} & 代理监听端口 \\
+  \texttt{COMPACTION\_PROXY\_UPSTREAM} & \texttt{http://localhost:11434/v1} & 上游 LLM API 基地址 \\
+  \texttt{COMPACTION\_PROXY\_UPSTREAM\_IS\_ANTHROPIC} & \texttt{auto} & 强制 Anthropic 格式(\texttt{true}/\texttt{false}/\texttt{auto}) \\
+  \texttt{COMPACTION\_PROXY\_MODEL} & \texttt{gpt-4o-mini} & 压缩/摘要模型 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{压缩行为}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_KEEP\_TURNS} & \texttt{6} & 保留的最近轮次(不压缩) \\
+  \texttt{COMPACTION\_PROXY\_MAX\_RETRIES} & \texttt{3} & 压缩 API 最大重试次数 \\
+  \texttt{COMPACTION\_PROXY\_TIMEOUT} & \texttt{120} & 压缩超时(秒) \\
+  \texttt{COMPACTION\_PROXY\_PARALLEL\_BLOCKS} & \texttt{3} & 并行压缩块数 \\
+  \texttt{COMPACTION\_PROXY\_PREEMPTIVE\_THRESHOLD} & \texttt{0.80} & 上下文 80\% 时预压缩 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{双引擎压缩}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_ENGINE} & \texttt{default} & 压缩引擎(\texttt{default}/\texttt{dual-layer}) \\
+  \texttt{COMPACTION\_PROXY\_DUAL\_GATEWAY\_RATIO} & \texttt{0.15} & L1 网关:保留 15\%(85\% 缩减) \\
+  \texttt{COMPACTION\_PROXY\_DUAL\_AGENT\_RATIO} & \texttt{0.50} & L2 Agent:保留 L1 输出的 50\% \\
+  \bottomrule
+\end{longtable}
+
+\subsection{安全}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_API\_SECRET} & \textit{空} & 代理访问密钥;为空时仅放行回环来源 \\
+  \texttt{COMPACTION\_PROXY\_REDACT\_SECRETS} & \texttt{1} & 自动脱敏消息中的密钥 \\
+  \bottomrule
+\end{longtable}
+
+\subsection{会话与记忆}
+
+\begin{longtable}{@{}llp{7cm}@{}}
+  \toprule
+  变量 & 默认值 & 说明 \\
+  \midrule
+  \texttt{COMPACTION\_PROXY\_BACKGROUND\_SESSIONS} & \texttt{3} & 并行压缩的后台会话数 \\
+  \texttt{COMPACTION\_PROXY\_LLM\_MEMORY} & \texttt{1} & 启用 LLM 记忆提取 \\
+  \texttt{COMPACTION\_PROXY\_MEMSKILL} & \texttt{0} & 启用自演进 MemSkill \\
+  \bottomrule
+\end{longtable}
+
+% ============================================================
+\section{接入指南}
+% ============================================================
+
+代理在 \texttt{localhost:8198} 监听,兼容 OpenAI / Anthropic / Gemini 三种 API 格式。
+以下各节给出已实测验证的接入方式。
+
+\subsection{DeepSeek}
+
+DeepSeek 使用 OpenAI 兼容格式,直接将其作为上游即可:
+
+\begin{lstlisting}
+export COMPACTION_PROXY_UPSTREAM=https://api.deepseek.com/v1
+export COMPACTION_PROXY_MODEL=deepseek-chat
+python3 compaction-proxy.py
+\end{lstlisting}
+
+代理内置 DeepSeek 模型上下文窗口注册表
+(\texttt{deepseek-chat} / \texttt{deepseek-coder} / \texttt{deepseek-r1} / \texttt{deepseek-v3},均为 128K),
+自动完成上下文压力预估。客户端侧只需将 base URL 指向代理:
+
+\begin{lstlisting}
+export OPENAI_BASE_URL=http://localhost:8198/v1
+export OPENAI_API_KEY=your-key
+\end{lstlisting}
+
+\subsection{DeepSeek Harness}
+
+DeepSeek Harness(官方文档 \url{https://www.deepseek.com/harness/en/})是 DeepSeek 官方的
+Agent 框架(developer preview),基于 Cordis 插件系统构建——
+模型、工具、技能、会话、沙箱、存储等一切能力均为可替换插件。
+其模型层支持 \texttt{openai-completions}(OpenAI 兼容)与 Anthropic 两种协议,
+可通过自定义 provider 将 \texttt{baseURL} 指向任意自托管端点。
+
+本代理即以此方式接入。本机配置位于 \texttt{\$DSH\_HOME/settings.yaml}
+(默认 \texttt{\~/.dsh/settings.yaml}):
+
+\begin{lstlisting}[language={}]
+# ~/.dsh/settings.yaml
+llm-pi-ai:
+  providers:
+    xfyun-maas:
+      displayName: 讯飞 MaaS via V6 Proxy
+      apiKeyEnv: XF_MASS_API_KEY        # 凭证走环境变量引用,不落盘
+      api: openai-completions           # OpenAI 兼容协议
+      baseURL: http://127.0.0.1:8198    # 指向压缩代理
+      models:
+        - id: xsparkx2agent
+          name: xsparkx2agent
+          contextWindow: 131072
+          maxTokens: 8192
+\end{lstlisting}
+
+配置要点:
+\begin{itemize}
+  \item \texttt{baseURL} 指向本代理 \texttt{http://127.0.0.1:8198},
+        所有模型请求先经过代理的上下文监测与压缩层;
+  \item \texttt{api: openai-completions} 与代理 \texttt{/v1/chat/completions}
+        端点匹配;模型发现使用 OpenAI 兼容 \texttt{GET /models};
+  \item 凭证以环境变量引用(\texttt{apiKeyEnv}),密钥不写入配置文件;
+  \item 模型变更即时生效,无需重启 Harness 服务。
+\end{itemize}
+
+已验证:本机 Harness 的 \texttt{xfyun-maas} provider 已指向
+\texttt{http://127.0.0.1:8198},代理 \texttt{/v1/chat/completions} 端点路由正常。
+
+\subsection{Hermes Agent}
+
+Hermes Agent 在 \texttt{\~/.hermes/config.yaml} 的 \texttt{model} 段中配置模型端点。
+将其 \texttt{base\_url} 指向本代理即可获得自动压缩能力:
+
+\begin{lstlisting}[language={}]
+# ~/.hermes/config.yaml
+model:
+  api_mode: chat_completions          # OpenAI 格式
+  base_url: http://127.0.0.1:8198/v1  # 指向压缩代理
+  default: xopglm51                   # 或任意上游可用模型
+  provider: memory-proxy              # 保留原 provider 标识
+\end{lstlisting}
+
+代理的 \texttt{/v1/chat/completions} 端点与 Hermes 的 \texttt{chat\_completions}
+模式完全兼容(已验证),并支持 Anthropic 格式的 \texttt{/v1/messages} 端点。
+
+\subsection{Claude Code}
+
+Claude Code 原生使用 Anthropic Messages API。通过环境变量或
+\texttt{\~/.claude/settings.json} 将 API 基地址指向代理:
+
+\begin{lstlisting}
+# 方式一:环境变量
+export ANTHROPIC_BASE_URL=http://localhost:8198
+export ANTHROPIC_AUTH_TOKEN=<your-token>
+claude
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash]
+// 方式二:~/.claude/settings.json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8198",
+    "ANTHROPIC_MODEL": "claude-sonnet-5"
+  }
+}
+\end{lstlisting}
+
+已验证:\texttt{POST /v1/messages} 路由存在且 Anthropic 格式识别成功
+(无密钥请求返回 401,格式错误则返回 400/404,可据此区分)。
+
+\subsection{OpenClaw}
+
+OpenClaw 通过 \texttt{openclaw.json} 的 \texttt{models.providers} 配置模型网关。
+将 provider 的 \texttt{baseUrl} 指向本代理即可让全部 Agent 流量经过压缩层:
+
+\begin{lstlisting}[language=bash]
+{
+  "models": {
+    "providers": {
+      "compaction-proxy": {
+        "baseUrl": "http://127.0.0.1:8198",
+        "apiKey": "<redacted>",
+        "api": "openai-completions",
+        "models": [{ "id": "xopdeepseekv4flash" }]
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "v6-compaction-provider": {
+        "enabled": true,
+        "config": {
+          "proxyUrl": "http://127.0.0.1:8198",
+          "model": "xsparkx2agent"
+        }
+      }
+    }
+  }
+}
+\end{lstlisting}
+
+已验证:本机 OpenClaw 的 \texttt{xunfei} provider 已直接指向
+\texttt{http://127.0.0.1:8198},且 \texttt{v6-compaction-provider} 插件经
+\texttt{/summarize} 端点接入压缩引擎(即 OpenClaw 上下文压缩链路已全程经由本代理)。
+
+% ============================================================
+\section{原有上下文系统屏蔽}
+% ============================================================
+
+接入本代理后,为避免多个压缩层互相冲突(双重压缩、重复刷记忆),
+应屏蔽各接入方自带的上下文管理系统,使压缩完全由本代理统一接管。
+
+\subsection{屏蔽原则}
+
+\begin{itemize}
+  \item \textbf{单一压缩源}:只有本代理执行上下文压缩,接入方自身不再触发压缩;
+  \item \textbf{手动压缩保留}:部分接入方保留手动压缩命令(如
+        \texttt{/compact}),便于必要时人工触发;
+  \item \textbf{可回滚}:所有修改均保留原配置备份。
+\end{itemize}
+
+\subsection{OpenClaw}
+
+修改 \texttt{openclaw.json} 中 \texttt{agents.defaults.compaction} 段:
+
+\begin{lstlisting}[language=bash]
+"compaction": {
+  "enabled": false,             // 关闭原版触发+替换+内置压缩
+  "midTurnPrecheck": { "enabled": false },
+  "memoryFlush": { "enabled": false },
+  "qualityGuard": { "enabled": false },
+  "provider": "v6-proxy"        // 保留 V6 插件作为压缩提供方
+}
+\end{lstlisting}
+
+\begin{itemize}
+  \item 修改即时生效(gateway 热重载,无需重启);
+  \item 自动压缩关闭后,超长上下文完全交由本代理
+        (\texttt{127.0.0.1:8198})在 LLM 网关层处理;
+  \item 手动 \texttt{/compact} 仍可用,走 \texttt{v6-proxy} 压缩链路。
+\end{itemize}
+
+\subsection{Hermes Agent}
+
+修改 \texttt{\~/.hermes/config.yaml}:
+
+\begin{lstlisting}[language=bash]
+compression:
+  enabled: false   # 关闭 Hermes 自带自动压缩
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{compression.enabled: false} 会禁用 Hermes 全部自动压缩
+        (源码 \texttt{native\_compaction.py} 明确注释);
+  \item 手动 \texttt{/compress} 命令仍可触发压缩;
+  \item 配置修改后需重启 Hermes 生效。
+\end{itemize}
+
+\subsection{DeepSeek Harness}
+
+DeepSeek Harness 基于 Cordis 插件系统,自带压缩后端插件
+\texttt{dsh-compaction-basic}(Token 计量驱动,默认 \texttt{auto: true}
+注册步骤边界压力检测与溢出恢复监听)。
+通过 profile 的 \texttt{cordis.patch.yml} 将其关闭:
+
+\begin{lstlisting}[language={}]
+# ~/.dsh/profiles/web/cordis.patch.yml (headless 同理)
+- id: dsh-compaction-basic
+  config:
+    auto: false   # 关闭 Harness 原生自动压缩
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{auto: false} 后,Harness 不再自行在步骤边界压缩或做溢出恢复,
+        超长上下文完全交由本代理在 LLM 网关层处理;
+  \item 手动压缩命令仍可用;
+  \item 修改需重启 \texttt{dsh} 进程生效;
+  \item 模型接入经 \texttt{\$DSH\_HOME/settings.yaml} 指向代理
+        (\texttt{baseURL: http://127.0.0.1:8198}),与屏蔽配置互不冲突。
+\end{itemize}
+
+\subsection{Claude Code}
+
+修改 \texttt{\~/.claude/settings.json}:
+
+\begin{lstlisting}[language=bash]
+{
+  "autoCompactEnabled": false,   // 关闭 Claude Code 自动压缩
+  "autoCompactWindow": 110000
+}
+\end{lstlisting}
+
+\begin{itemize}
+  \item \texttt{autoCompactEnabled: false} 后,Claude Code 不再自行压缩上下文;
+  \item 压缩由指向的代理(如 \texttt{ANTHROPIC\_BASE\_URL})接管;
+  \item 手动压缩指令仍可用。
+\end{itemize}
+
+\subsection{屏蔽效果验证}
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{@{}lp{5.5cm}p{4cm}@{}}
+    \toprule
+    接入方 & 原系统 & 屏蔽后状态 \\
+    \midrule
+    OpenClaw & compaction 四项开关 & 全部 false,代理接管 \\
+    Hermes & compression.enabled & false,代理接管 \\
+    Claude Code & autoCompactEnabled & false,代理接管 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+屏蔽完成后,通过 \texttt{GET /health} 确认代理运行正常
+(\texttt{circuit\_breaker.state = closed}),三方请求均经 \texttt{8198} 端口
+由本代理统一压缩。
+
+% ============================================================
+\section{安全与可靠性}
+% ============================================================
+
+\subsection{认证}
+
+\begin{itemize}
+  \item 设置 \texttt{COMPACTION\_PROXY\_API\_SECRET} 后,所有敏感端点
+        (\texttt{/summarize}、\texttt{/compact}、\texttt{/sessions/*}、
+        \texttt{/skills/*}、\texttt{/profile}、\texttt{/memory}、\texttt{/arc/*})
+        要求 \texttt{Authorization: Bearer <secret>} 或 \texttt{X-API-Key: <secret>};
+  \item 未设置密钥时,仅放行回环来源(127.0.0.1 / ::1),
+        非回环客户端一律返回 401(纵深防御);
+  \item 核心转发端点(\texttt{/chat/completions}、\texttt{/v1/messages})
+        保持无代理级认证,依赖上游密钥校验,以兼容本机 Agent 集成。
+\end{itemize}
+
+\subsection{密钥保护}
+
+\begin{itemize}
+  \item Gemini API key 通过 \texttt{x-goog-api-key} 请求头传递,
+        不进入 URL 查询参数,避免泄露至访问日志;
+  \item 支持自动脱敏消息中的密钥(\texttt{COMPACTION\_PROXY\_REDACT\_SECRETS=1})。
+\end{itemize}
+
+\subsection{并发安全}
+
+\begin{itemize}
+  \item 压缩系统提示词以参数传递(\texttt{system\_prompt\_override}),
+        不再修改模块级全局变量,消除并发请求间的提示词竞态;
+  \item \texttt{SemanticMemory} 读写由线程锁保护,落盘采用原子替换;
+  \item 压缩缓存按消息内容与自定义指令双重键控,避免不同指令串用缓存;
+  \item \texttt{\_memskill\_selected} 等内部字段在请求入口即被消费移除,
+        不会残留至上游请求体。
+\end{itemize}
+
+\subsection{可靠性组件}
+
+\begin{itemize}
+  \item \textbf{熔断器}:3 次连续失败后进入 60 秒冷却;
+  \item \textbf{抖动检测}:连续快速压缩(3 次/5 条消息)时切换为激进截断;
+  \item \textbf{压缩安全验证}:压缩结果 token 数超过原文时降级为截断,防止膨胀;
+  \item \textbf{压缩缓存}:30 分钟 TTL,避免对未变化上下文重复压缩。
+\end{itemize}
+
+% ============================================================
+\section{验证结果}
+% ============================================================
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{@{}lp{4cm}p{7cm}@{}}
+    \toprule
+    测试项 & 输入 & 结果 \\
+    \midrule
+    \texttt{/health} & GET & HTTP 200,熔断器 closed \\
+    \texttt{/summarize} & 2 条消息 & HTTP 200,0.0s,返回有效摘要 \\
+    \texttt{/summarize} & 12 轮(24 条) & HTTP 200,13.1s,1948 字符,保留轮次编号 \\
+    并发压缩 & 6 路不同指令 & 全部 200,无提示词串用 \\
+    异常路径 & 缺 key / 坏 JSON / 空体 & 401 / 400 / 200(符合预期) \\
+    \texttt{/compact} & 16 条,keep=3 & 200,16 $\rightarrow$ 6 条 \\
+    认证端点 & 本机回环 & 全部 200(回环放行) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ============================================================
+\section{常见问题}
+% ============================================================
+
+\subsection{401 Unauthorized}
+
+\begin{itemize}
+  \item 检查代理自身密钥(\texttt{COMPACTION\_PROXY\_API\_SECRET});
+  \item Anthropic 格式使用 \texttt{x-api-key} 头,OpenAI 格式使用
+        \texttt{Authorization: Bearer <key>} 头。
+\end{itemize}
+
+\subsection{上下文未压缩}
+
+\begin{itemize}
+  \item 检查 \texttt{COMPACTION\_PROXY\_PREEMPTIVE\_THRESHOLD}(默认 0.80);
+  \item 确认压缩模型在上游可用;
+  \item 查看日志 \texttt{\~/.local/share/compaction-proxy/proxy.log}。
+\end{itemize}
+
+\subsection{格式错误}
+
+\begin{itemize}
+  \item Anthropic 客户端:使用 \texttt{/v1/messages};
+  \item OpenAI 兼容客户端:使用 \texttt{/v1/chat/completions};
+  \item 代理自动探测格式,但显式端点可避免歧义。
+\end{itemize}
+
+% ============================================================
+\section*{附:环境变量速查}
+% ============================================================
+
+完整配置模板见 \texttt{.env.example}。常用变量:
+
+\begin{itemize}
+  \item \texttt{COMPACTION\_PROXY\_PORT}——监听端口(默认 8198);
+  \item \texttt{COMPACTION\_PROXY\_UPSTREAM}——上游 API 基地址;
+  \item \texttt{COMPACTION\_PROXY\_MODEL}——压缩模型;
+  \item \texttt{COMPACTION\_PROXY\_API\_SECRET}——代理访问密钥;
+  \item \texttt{COMPACTION\_PROXY\_ENGINE}——压缩引擎(default / dual-layer);
+  \item \texttt{COMPACTION\_PROXY\_MEMSKILL}——启用 MemSkill(0/1)。
+\end{itemize}
+
+\end{document}
+

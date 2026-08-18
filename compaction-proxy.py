@@ -119,10 +119,10 @@ LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
 
 UPSTREAM_BASE = os.environ.get(
     "COMPACTION_PROXY_UPSTREAM",
-    "http://localhost:11434/v1"
+    "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic"
 )
-# V6 FIX: Default: Ollama local endpoint. Set COMPACTION_PROXY_UPSTREAM for your provider.
-# Upstream client sends OpenAI-format requests, so we need to convert.
+# V6 FIX: maas-coding-api is an Anthropic-format endpoint.
+# OpenClaw sends OpenAI-format requests, so we need to convert.
 # This constant tracks whether the upstream requires Anthropic format.
 UPSTREAM_IS_ANTHROPIC = os.environ.get(
     "COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC",
@@ -165,13 +165,12 @@ REDACT_SECRETS = os.environ.get("COMPACTION_PROXY_REDACT_SECRETS", "1") == "1"
 # ── 模型上下文窗口 ──────────────────────────────────────────────────
 
 MODEL_CONTEXT_LIMITS = {
-    # Provider-specific models (add your own here)
-    # xfyun/xspark models: uncomment if using iFlytek MaaS
-    # "xsparkx2flash": 32000, "xsparkx2": 32000,
-    # "xopglm51": 200000, "xopglm5": 128000,
-    # "xopqwen35397b": 128000, "xopdeepseekv4flash": 128000,
-    # "xopkimik26": 128000, "xminimaxm25": 128000,
-        # "xop3qwencodernext": 128000, "xopglmv47flash": 128000,
+    # xfyun models
+    "xopglm51": 200000, "xopglm5": 128000,
+    "xsparkx2agent": 32000, "xsparkx2flash": 32000, "xsparkx2": 32000,
+    "xopqwen35397b": 128000, "xopdeepseekv4flash": 128000, "xopdeepseekv32": 128000,
+    "xopkimik26": 128000, "xopkimik25": 128000, "xminimaxm25": 128000,
+    "xop3qwencodernext": 128000, "xopglmv47flash": 128000,
     # OpenAI models
     "gpt-4o": 128000, "gpt-4o-mini": 128000, "gpt-4-turbo": 128000, "gpt-4": 8192, "gpt-3.5-turbo": 16385,
     "o1": 200000, "o1-mini": 128000, "o1-pro": 200000, "o3": 200000, "o3-mini": 200000, "o4-mini": 200000,
@@ -362,9 +361,9 @@ class AnthropicProvider(ProviderAdapter):
 
     def build_compaction_url(self, base_url): return base_url.rstrip("/") + "/v1/messages"
     def build_compaction_headers(self, api_key):
-        # some MaaS proxies (e.g. iFlytek) are Anthropic-format proxies that require
+        # iFlytek MaaS (xf-yun.com) is an Anthropic-format proxy that requires
         # Authorization: Bearer instead of x-api-key. Include both headers so
-        # it works with native Anthropic API AND MaaS proxies.
+        # it works with native Anthropic API AND iFlytek MaaS proxies.
         headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
         if api_key:
             headers["x-api-key"] = api_key
@@ -385,7 +384,7 @@ class AnthropicProvider(ProviderAdapter):
         return {"model": model, "max_tokens": max_tokens, "temperature": temperature, "system": system_text.strip(), "messages": non_system}
     def extract_compaction_content(self, data):
         # Anthropic response: content[0].text
-        # V6 fix: some-model returns only thinking blocks with empty text in
+        # V6 fix: xsparkx2agent returns only thinking blocks with empty text in
         # non-streaming mode. Fall back to thinking content if no text blocks.
         blocks = data.get("content", [])
         text_parts = []
@@ -446,10 +445,12 @@ class GeminiProvider(ProviderAdapter):
     def name(self) -> str: return "gemini"
 
     def build_compaction_url(self, base_url):
-        # Gemini uses key= query param, model in URL path
+        # Gemini uses x-goog-api-key header, model in URL path
         return base_url  # Will be constructed with model in URL
     def build_compaction_headers(self, api_key):
-        return {"Content-Type": "application/json"}  # Auth via query param
+        # Auth via x-goog-api-key header (NOT query param — avoids leaking the
+        # key into access logs / proxied URLs)
+        return {"Content-Type": "application/json", "x-goog-api-key": api_key}
     def build_compaction_payload(self, model, messages, max_tokens, temperature):
         # Convert OpenAI messages to Gemini contents format
         system_text = ""
@@ -491,15 +492,20 @@ class GeminiProvider(ProviderAdapter):
             if p in text: return True
         return False
     def extract_api_key(self, headers):
-        # Gemini uses key= query param, but also accept Bearer
+        # Gemini: prefer x-goog-api-key header, fall back to Bearer
+        gkey = headers.get("x-goog-api-key", headers.get("X-Goog-Api-Key", ""))
+        if gkey:
+            return gkey
         auth = headers.get("Authorization", headers.get("authorization", ""))
         if auth.startswith("Bearer "): return auth[7:]
         return ""
     def build_forward_headers(self, headers, api_key):
         h = dict(headers)
-        # Remove Bearer auth for Gemini (uses query param)
+        # Gemini auth via x-goog-api-key header (never Bearer / query param)
         h.pop("Authorization", None)
         h.pop("authorization", None)
+        if api_key:
+            h["x-goog-api-key"] = api_key
         return h
     def get_forward_path(self, original_path): return original_path
 
@@ -760,12 +766,14 @@ class CompactionCache:
         self._cache = {}
         self._ttl = ttl_seconds
 
-    def _make_key(self, messages: list) -> str:
+    def _make_key(self, messages: list, salt: str = "") -> str:
         raw = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+        if salt:
+            raw = raw + "\x00" + salt
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def get(self, messages: list) -> Optional[str]:
-        key = self._make_key(messages)
+    def get(self, messages: list, salt: str = "") -> Optional[str]:
+        key = self._make_key(messages, salt)
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -775,8 +783,8 @@ class CompactionCache:
             return None
         return value
 
-    def put(self, messages: list, summary: str):
-        key = self._make_key(messages)
+    def put(self, messages: list, summary: str, salt: str = ""):
+        key = self._make_key(messages, salt)
         self._cache[key] = (summary, time.time())
 
     def clear(self):
@@ -822,6 +830,7 @@ class SemanticMemory:
     """V4: Episodic-Semantic Dual-Layer Memory (arXiv:2605.17625)"""
     def __init__(self, path=SEMANTIC_MEMORY_PATH):
         self._path = path
+        self._lock = threading.Lock()
         self._knowledge = {"goals": [], "decisions": [], "errors": [], "files": [], "constraints": [], "insights": []}
         self._load()
 
@@ -830,7 +839,8 @@ class SemanticMemory:
             with open(self._path) as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    self._knowledge = data
+                    with self._lock:
+                        self._knowledge = data
         except Exception:
             pass
 
@@ -841,8 +851,10 @@ class SemanticMemory:
                 dir=os.path.dirname(self._path), suffix='.tmp'
             )
             try:
+                with self._lock:
+                    snapshot = json.dumps(self._knowledge, ensure_ascii=False, indent=2)
                 with os.fdopen(tmp_fd, 'w') as f:
-                    json.dump(self._knowledge, f, ensure_ascii=False, indent=2)
+                    f.write(snapshot)
                 os.replace(tmp_path, self._path)  # atomic on POSIX
             except BaseException:
                 # Clean up temp file on any error
@@ -856,44 +868,46 @@ class SemanticMemory:
 
     def extract_from_messages(self, messages, llm_result=None):
         """Extract knowledge from messages. Use LLM result if available, else regex."""
-        if llm_result:
-            # Merge LLM-extracted knowledge
-            for key in ["goals", "decisions", "errors", "files", "constraints", "insights"]:
-                if key in llm_result:
-                    for item in llm_result[key]:
-                        if isinstance(item, str) and item not in self._knowledge.get(key, []):
-                            self._knowledge.setdefault(key, []).append(item)
-            # Bound each category
-            for cat in self._knowledge:
-                self._knowledge[cat] = list(dict.fromkeys(self._knowledge[cat]))[-20:]
-            self._save()
-            return
-
-        # Fall back to regex-based extraction (existing code)
-        commitments = extract_commitments(messages)
-        cat_map = {"goal": "goals", "constraint": "constraints", "decision": "decisions", "error": "errors", "file_op": "files"}
-        for ctype, text in commitments:
-            cat = cat_map.get(ctype, "goals")
-            lst = self._knowledge.setdefault(cat, [])
-            if text not in lst:
-                lst.append(text)
-        for k in self._knowledge:
-            self._knowledge[k] = list(dict.fromkeys(self._knowledge[k]))[-20:]
+        with self._lock:
+            if llm_result:
+                # Merge LLM-extracted knowledge
+                for key in ["goals", "decisions", "errors", "files", "constraints", "insights"]:
+                    if key in llm_result:
+                        for item in llm_result[key]:
+                            if isinstance(item, str) and item not in self._knowledge.get(key, []):
+                                self._knowledge.setdefault(key, []).append(item)
+                # Bound each category
+                for cat in self._knowledge:
+                    self._knowledge[cat] = list(dict.fromkeys(self._knowledge[cat]))[-20:]
+            else:
+                # Fall back to regex-based extraction (existing code)
+                commitments = extract_commitments(messages)
+                cat_map = {"goal": "goals", "constraint": "constraints", "decision": "decisions", "error": "errors", "file_op": "files"}
+                for ctype, text in commitments:
+                    cat = cat_map.get(ctype, "goals")
+                    lst = self._knowledge.setdefault(cat, [])
+                    if text not in lst:
+                        lst.append(text)
+                for k in self._knowledge:
+                    self._knowledge[k] = list(dict.fromkeys(self._knowledge[k]))[-20:]
         self._save()
 
     def format_for_prompt(self):
-        if not any(self._knowledge.values()):
-            return ""
-        lines = ["## PERSISTENT SEMANTIC MEMORY (survives across compactions)"]
-        for cat, items in self._knowledge.items():
-            if items:
-                lines.append(f"### {cat.title()}")
-                for item in items[-10:]:
-                    lines.append(f"- {item}")
-        return "\n".join(lines)
+        with self._lock:
+            knowledge = self._knowledge
+            if not any(knowledge.values()):
+                return ""
+            lines = ["## PERSISTENT SEMANTIC MEMORY (survives across compactions)"]
+            for cat, items in knowledge.items():
+                if items:
+                    lines.append(f"### {cat.title()}")
+                    for item in items[-10:]:
+                        lines.append(f"- {item}")
+            return "\n".join(lines)
 
     def clear(self):
-        self._knowledge = {"goals": [], "decisions": [], "errors": [], "files": [], "constraints": [], "insights": []}
+        with self._lock:
+            self._knowledge = {"goals": [], "decisions": [], "errors": [], "files": [], "constraints": [], "insights": []}
         self._save()
 
 
@@ -3120,7 +3134,7 @@ def anthropic_to_openai_response(data: dict, model: str = "") -> dict:
         if block.get("type") == "text":
             text_parts.append(block.get("text", ""))
         elif block.get("type") == "thinking":
-            # Some models put all actual content in thinking
+            # Some models (e.g. xsparkx2agent) put all actual content in thinking
             # blocks with no text block. Collect thinking content as fallback.
             thinking_text = block.get("text", "")
             if thinking_text:
@@ -3608,7 +3622,7 @@ CONVERSATION:
     url = mem_provider.build_compaction_url(compaction_upstream)
 
     if isinstance(mem_provider, GeminiProvider):
-        url = f"{compaction_upstream.rstrip('/')}/v1beta/models/{COMPACTION_MODEL}:generateContent?key={compaction_api_key}"
+        url = f"{compaction_upstream.rstrip('/')}/v1beta/models/{COMPACTION_MODEL}:generateContent"
 
     try:
         async with session.post(
@@ -4456,6 +4470,7 @@ async def compact_messages(
     session_id: str = "default",
     _save_state: bool = True,
     selected_skills: list = None,
+    system_prompt_override: str = None,
 ) -> Optional[str]:
     """
     V4: Compress old messages into a structured summary using LLM.
@@ -4483,7 +4498,7 @@ async def compact_messages(
         metrics.inc("compaction_circuit_breaker_skip")
         return None
 
-    cached = compaction_cache.get(old_messages)
+    cached = compaction_cache.get(old_messages, salt=system_prompt_override or "")
     if cached is not None:
         logger.info(f"Compaction cache hit ({len(cached)} chars)")
         metrics.inc("compaction_cache_hit")
@@ -4501,7 +4516,7 @@ async def compact_messages(
             return prior_summary
 
         # Build incremental compaction request
-        system_content = COMPACTION_SYSTEM_PROMPT
+        system_content = system_prompt_override if system_prompt_override else COMPACTION_SYSTEM_PROMPT
         identifiers = extract_identifiers(new_msgs)
         identifier_note = ""
         if identifiers:
@@ -4561,7 +4576,7 @@ async def compact_messages(
         commitments = extract_commitments(old_messages)
         commitment_note = format_commitments_for_prompt(commitments)
 
-        system_content = COMPACTION_SYSTEM_PROMPT + identifier_note
+        system_content = (system_prompt_override if system_prompt_override else COMPACTION_SYSTEM_PROMPT) + identifier_note
         if commitment_note:
             system_content += "\n\n" + commitment_note
 
@@ -4610,9 +4625,9 @@ async def compact_messages(
     )
     url = compaction_provider.build_compaction_url(compaction_upstream)
 
-    # V6: Gemini special handling — model in URL + key as query param
+    # V6: Gemini special handling — model in URL, key via x-goog-api-key header
     if isinstance(compaction_provider, GeminiProvider):
-        url = f"{compaction_upstream.rstrip('/')}/v1beta/models/{COMPACTION_MODEL}:generateContent?key={compaction_api_key}"
+        url = f"{compaction_upstream.rstrip('/')}/v1beta/models/{COMPACTION_MODEL}:generateContent"
 
     try:
         async with session.post(
@@ -4634,7 +4649,7 @@ async def compact_messages(
             content = compaction_provider.extract_compaction_content(data)
 
             # V6 fix: If non-streaming response has only empty thinking blocks
-            # (certain model bug), retry as streaming to capture content
+            # (xsparkx2agent bug), retry as streaming to capture content
             if not content and isinstance(compaction_provider, AnthropicProvider):
                 content_blocks = data.get("content", [])
                 has_thinking_only = (
@@ -4687,7 +4702,7 @@ async def compact_messages(
             metrics.inc("compaction_success")
             logger.info(f"Compaction summary generated: {len(content)} chars (provider={compaction_provider.name})")
 
-            compaction_cache.put(old_messages, content)
+            compaction_cache.put(old_messages, content, salt=system_prompt_override or "")
 
             # V5: Persist per-session prior summary (no more global state)
             # Skip saving during parallel block compaction to avoid corruption
@@ -4851,7 +4866,7 @@ async def _merge_summaries(
     url = merge_provider.build_compaction_url(compaction_upstream)
 
     if isinstance(merge_provider, GeminiProvider):
-        url = f"{compaction_upstream.rstrip('/')}/v1beta/models/{COMPACTION_MODEL}:generateContent?key={compaction_api_key}"
+        url = f"{compaction_upstream.rstrip('/')}/v1beta/models/{COMPACTION_MODEL}:generateContent"
 
     try:
         async with session.post(
@@ -5705,13 +5720,14 @@ async def do_compaction(
             is_preemptive=is_preemptive, is_thrashing=is_thrashing_now,
         )
         selected_skills = skill_controller.select_skills(compaction_ctx)
-        # Store selected_skills on body for downstream pipeline functions
-        body["_memskill_selected"] = selected_skills
         if selected_skills:
             logger.info(f"MemSkill: {len(selected_skills)} skills selected for session {session_id}")
-    # V7: Also check if skills were pre-set by MemSkillAwareEngine
-    if selected_skills is None and "_memskill_selected" in body:
-        selected_skills = body.pop("_memskill_selected")
+    # V7: Consume skills pre-set by MemSkillAwareEngine. Always pop so the
+    # internal "_memskill_selected" field never leaks to the upstream API.
+    if "_memskill_selected" in body:
+        pre_set_skills = body.pop("_memskill_selected")
+        if selected_skills is None:
+            selected_skills = pre_set_skills
 
     # V5 FIX: Save original messages BEFORE any modification for safety verification
     original_messages = list(messages)  # shallow copy for safety check
@@ -5752,11 +5768,14 @@ async def do_compaction(
 
     # V6: Adaptive keep_turns — when messages are few, reduce keep_turns so
     # split_messages() actually produces old_messages to compact.
+    # Callers (e.g. handle_manual_compact) may pass body["keep_recent_turns"].
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
-    adaptive_max_keep = max(2, user_msg_count // 2) if user_msg_count > 0 else KEEP_RECENT_TURNS
+    requested_keep = body.get("keep_recent_turns", KEEP_RECENT_TURNS)
+    base_keep = requested_keep if isinstance(requested_keep, int) and requested_keep >= 2 else KEEP_RECENT_TURNS
+    adaptive_max_keep = max(2, user_msg_count // 2) if user_msg_count > 0 else base_keep
 
     for attempt in range(1, MAX_COMPACTION_RETRIES + 1):
-        keep_turns = min(KEEP_RECENT_TURNS - (attempt - 1) * 2, adaptive_max_keep)
+        keep_turns = min(base_keep - (attempt - 1) * 2, adaptive_max_keep)
         keep_turns = max(2, keep_turns)
 
         logger.info(
@@ -6129,7 +6148,7 @@ async def handle_non_streaming(
         if need_anthropic_conversion:
             try:
                 anthropic_data = json.loads(resp_body)
-                # V6 FIX: Some upstream APIs (e.g. certain MaaS proxies) return
+                # V6 FIX: Some upstream APIs (e.g. iFlytek MaaS xsparkx2agent) return
                 # only a thinking block with empty text in non-streaming mode, losing
                 # all content. Detect this and fall back to streaming to get the actual text.
                 content_blocks = anthropic_data.get("content", [])
@@ -6409,8 +6428,52 @@ async def _stream_sse_response(
     return stream_resp
 
 
+# ── V5: 认证装饰器 ──────────────────────────────────────────────────────
+
+def _is_loopback_peer(request) -> bool:
+    """True if the request came from a loopback address (127.0.0.1 / ::1)."""
+    try:
+        peer = request.transport.get_extra_info("peername")
+    except Exception:
+        return False
+    if not peer:
+        return False
+    host = peer[0] if isinstance(peer, tuple) else peer
+    return host in ("127.0.0.1", "::1", "localhost")
+
+
+def require_auth(handler):
+    """V5: Require API secret for sensitive endpoints.
+    If COMPACTION_PROXY_API_SECRET is not set, only loopback peers are
+    allowed (defense in depth — the proxy still binds 127.0.0.1, but a
+    non-loopback client can never bypass auth).
+    Supports Authorization: Bearer <secret> and X-API-Key: <secret> headers.
+    """
+    async def wrapper(request):
+        if not API_SECRET:
+            # No secret configured — restrict to loopback only.
+            if not _is_loopback_peer(request):
+                logger.warning(
+                    f"Rejected {request.method} {request.path} from non-loopback peer "
+                    f"— set COMPACTION_PROXY_API_SECRET to allow remote clients"
+                )
+                return web.json_response({"error": "Unauthorized"}, status=401)
+            return await handler(request)
+        # Check Authorization header
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:] == API_SECRET:
+            return await handler(request)
+        # Check X-API-Key header
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key == API_SECRET:
+            return await handler(request)
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    return wrapper
+
+
 # ── V3: ARC 回查端点 ──────────────────────────────────────────────────
 
+@require_auth
 async def handle_arc_retrieve(request: web.Request) -> web.Response:
     """
     V3: ARC 回查端点 — 通过 ID 检索被引用的原始 tool_result 内容。
@@ -6479,7 +6542,7 @@ async def handle_anthropic_messages(request: web.Request) -> web.Response:
 
     # Add model field if missing
     if "model" not in body:
-        body["model"] = os.environ.get("COMPACTION_PROXY_DEFAULT_MODEL", "gpt-4o-mini")
+        body["model"] = "claude-sonnet-4"
 
     session_id = extract_session_id(body, headers)
 
@@ -6745,28 +6808,6 @@ async def handle_passthrough(request: web.Request) -> web.Response:
     return web.Response(status=status, body=resp_body, headers=resp_headers)
 
 
-# ── V5: 认证装饰器 ──────────────────────────────────────────────────────
-
-def require_auth(handler):
-    """V5: Require API secret for sensitive endpoints.
-    If COMPACTION_PROXY_API_SECRET is not set, no auth is required.
-    Supports Authorization: Bearer <secret> and X-API-Key: <secret> headers.
-    """
-    async def wrapper(request):
-        if not API_SECRET:
-            return await handler(request)  # No secret configured = no auth required
-        # Check Authorization header
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer ") and auth[7:] == API_SECRET:
-            return await handler(request)
-        # Check X-API-Key header
-        api_key = request.headers.get("X-API-Key", "")
-        if api_key == API_SECRET:
-            return await handler(request)
-        return web.json_response({"error": "Unauthorized"}, status=401)
-    return wrapper
-
-
 async def handle_health(request: web.Request) -> web.Response:
     snap = metrics.snapshot()
     sem_mem_stats = {}
@@ -6908,6 +6949,7 @@ async def handle_metrics(request: web.Request) -> web.Response:
 
 # ── V5: Session & Profile Endpoints ──────────────────────────────────────
 
+@require_auth
 async def handle_sessions_search(request: web.Request) -> web.Response:
     """V5: FTS5 session search endpoint"""
     if not session_store:
@@ -6924,6 +6966,7 @@ async def handle_sessions_search(request: web.Request) -> web.Response:
     return web.json_response({"query": query, "results": results, "count": len(results)})
 
 
+@require_auth
 async def handle_sessions_recent(request: web.Request) -> web.Response:
     """V5: Recent sessions endpoint"""
     if not session_store:
@@ -6937,6 +6980,7 @@ async def handle_sessions_recent(request: web.Request) -> web.Response:
     return web.json_response({"sessions": results, "count": len(results)})
 
 
+@require_auth
 async def handle_session_detail(request: web.Request) -> web.Response:
     """V5: Single session detail endpoint"""
     if not session_store:
@@ -6972,6 +7016,7 @@ async def handle_session_create(request: web.Request) -> web.Response:
     return resp
 
 
+@require_auth
 async def handle_profile_get(request: web.Request) -> web.Response:
     """V5: Get user profile"""
     if not user_profile:
@@ -6997,6 +7042,7 @@ async def handle_profile_post(request: web.Request) -> web.Response:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
 
+@require_auth
 async def handle_memory_get(request: web.Request) -> web.Response:
     """V5: Get semantic memory"""
     if not semantic_memory:
@@ -7015,6 +7061,7 @@ async def handle_memory_delete(request: web.Request) -> web.Response:
 
 # ── V5: Manual Compaction & Session Resume Endpoints ──────────────────────
 
+@require_auth
 async def handle_manual_compact(request: web.Request) -> web.Response:
     """
     V5: Manual compaction trigger — like Claude Code's /compact command.
@@ -7073,11 +7120,12 @@ async def handle_manual_compact(request: web.Request) -> web.Response:
     })
 
 
+@require_auth
 async def handle_summarize(request: web.Request) -> web.Response:
     """
     V6: Summarize endpoint for CompactionProvider plugin.
     Returns a summary string instead of compacted messages.
-    This is the bridge between the agent's CompactionProvider interface
+    This is the bridge between OpenClaw's CompactionProvider interface
     (which requires summarize() to return a string) and the V6 proxy's
     compaction engine (which produces structured summaries).
     """
@@ -7097,7 +7145,7 @@ async def handle_summarize(request: web.Request) -> web.Response:
         # No messages to summarize — return previous summary or empty
         return web.json_response({"summary": previous_summary or ""})
 
-    # Extract API key from request (check body first since the agent sandbox strips headers)
+    # Extract API key from request (check body first since OpenClaw sandbox strips headers)
     api_key = body.get("apiKey", "")
     if not api_key:
         api_key = request.headers.get("Authorization", "").replace("Bearer ", "")
@@ -7117,6 +7165,12 @@ async def handle_summarize(request: web.Request) -> web.Response:
     adaptive_keep = max(1, min(KEEP_RECENT_TURNS, user_msg_count // 2))
     old_messages, recent_messages = split_messages(messages, adaptive_keep)
 
+    # If custom instructions provided, augment the compaction system prompt
+    # WITHOUT mutating the module-level constant (avoids cross-request races).
+    effective_prompt = COMPACTION_SYSTEM_PROMPT
+    if custom_instructions:
+        effective_prompt = COMPACTION_SYSTEM_PROMPT + "\n\nAdditional instructions from user: " + custom_instructions
+
     if not old_messages:
         # Still not enough to split — summarize ALL conversation messages as a last resort
         conv_only = [m for m in messages if m.get("role") != "system"]
@@ -7131,6 +7185,7 @@ async def handle_summarize(request: web.Request) -> web.Response:
             summary = await compact_messages(
                 conv_only, api_key, http_session,
                 session_id=session_id,
+                system_prompt_override=effective_prompt,
             )
             if summary is None:
                 return web.json_response({"error": "Summarization failed"}, status=500)
@@ -7142,30 +7197,20 @@ async def handle_summarize(request: web.Request) -> web.Response:
     if previous_summary and session_store:
         session_store.save_prior_summary(session_id, previous_summary, 0)
 
-    # If custom instructions provided, temporarily augment the compaction system prompt
-    global COMPACTION_SYSTEM_PROMPT
-    original_prompt = COMPACTION_SYSTEM_PROMPT
-    if custom_instructions:
-        COMPACTION_SYSTEM_PROMPT = original_prompt + "\n\nAdditional instructions from user: " + custom_instructions
+    # Use compact_messages to generate the summary
+    summary = await compact_messages(
+        old_messages, api_key, http_session,
+        session_id=session_id,
+        system_prompt_override=effective_prompt,
+    )
 
-    try:
-        # Use compact_messages to generate the summary
-        summary = await compact_messages(
-            old_messages, api_key, http_session,
-            session_id=session_id,
-        )
+    if summary is None:
+        return web.json_response({"error": "Summarization failed"}, status=500)
 
-        if summary is None:
-            return web.json_response({"error": "Summarization failed"}, status=500)
-
-        return web.json_response({"summary": summary})
-
-    finally:
-        # Restore original prompt
-        if custom_instructions:
-            COMPACTION_SYSTEM_PROMPT = original_prompt
+    return web.json_response({"summary": summary})
 
 
+@require_auth
 async def handle_session_transcript(request: web.Request) -> web.Response:
     """V5: Get full conversation transcript for session resume"""
     if not session_store:
@@ -7181,6 +7226,7 @@ async def handle_session_transcript(request: web.Request) -> web.Response:
     })
 
 
+@require_auth
 async def handle_session_resume(request: web.Request) -> web.Response:
     """V5: Resume a session with transcript + summary"""
     if not session_store:
@@ -7200,6 +7246,7 @@ async def handle_session_resume(request: web.Request) -> web.Response:
 
 # ── V7: MemSkill API Endpoints ────────────────────────────────────────────
 
+@require_auth
 async def handle_skills_list(request: web.Request) -> web.Response:
     """V7: List all skills and their status"""
     if not skill_registry:
@@ -7213,6 +7260,7 @@ async def handle_skills_list(request: web.Request) -> web.Response:
     })
 
 
+@require_auth
 async def handle_skills_detail(request: web.Request) -> web.Response:
     """V7: Get skill detail + version history"""
     if not skill_registry:
@@ -7236,6 +7284,7 @@ async def handle_skills_detail(request: web.Request) -> web.Response:
     return web.json_response({"skill": skill.to_dict(), "snapshots": snapshots})
 
 
+@require_auth
 async def handle_skills_create(request: web.Request) -> web.Response:
     """V7: Create a new skill (→ draft status)"""
     if not skill_registry:
@@ -7268,6 +7317,7 @@ async def handle_skills_create(request: web.Request) -> web.Response:
     return web.json_response({"skill_id": skill_id, "status": "draft"}, status=201)
 
 
+@require_auth
 async def handle_skills_activate(request: web.Request) -> web.Response:
     """V7: Activate a draft skill"""
     if not skill_registry:
@@ -7279,6 +7329,7 @@ async def handle_skills_activate(request: web.Request) -> web.Response:
     return web.json_response({"error": f"Cannot activate '{skill_id}' — check status and params"}, status=400)
 
 
+@require_auth
 async def handle_skills_deprecate(request: web.Request) -> web.Response:
     """V7: Deprecate an active skill"""
     if not skill_registry:
@@ -7290,6 +7341,7 @@ async def handle_skills_deprecate(request: web.Request) -> web.Response:
     return web.json_response({"error": f"Cannot deprecate '{skill_id}'"}, status=400)
 
 
+@require_auth
 async def handle_skills_rollback(request: web.Request) -> web.Response:
     """V7: Rollback a skill to a specific version"""
     if not skill_registry:
@@ -7309,6 +7361,7 @@ async def handle_skills_rollback(request: web.Request) -> web.Response:
     return web.json_response({"error": f"Rollback failed for '{skill_id}' v{target_version}"}, status=400)
 
 
+@require_auth
 async def handle_skills_performance(request: web.Request) -> web.Response:
     """V7: Get aggregated performance stats for a skill"""
     if not skill_registry:
@@ -7328,6 +7381,7 @@ async def handle_skills_performance(request: web.Request) -> web.Response:
     })
 
 
+@require_auth
 async def handle_skills_trajectories(request: web.Request) -> web.Response:
     """V7: Get recent compaction trajectories"""
     if not session_store:
@@ -7357,6 +7411,7 @@ async def handle_skills_trajectories(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+@require_auth
 async def handle_skills_designer_trigger(request: web.Request) -> web.Response:
     """V7: Manually trigger the Skill Designer (Phase 4 placeholder)"""
     if not MEMSKILL_ENABLED:
@@ -7478,7 +7533,7 @@ def main():
     except Exception as e:
         logger.warning(f"ARC log restoration error (non-fatal): {e}")
 
-    logger.info(f"Compaction Proxy V6 starting on {LISTEN_HOST}:{LISTEN_PORT}")
+    logger.info(f"OpenClaw Compaction Proxy V6 starting on {LISTEN_HOST}:{LISTEN_PORT}")
     logger.info(f"   Upstream: {UPSTREAM_BASE}")
     logger.info(f"   Compaction model: {COMPACTION_MODEL}")
     logger.info(f"   Keep recent turns: {KEEP_RECENT_TURNS}")
