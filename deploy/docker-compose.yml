@@ -1,0 +1,41 @@
+# LLM Context Compaction Proxy — Docker Compose 一键部署
+version: "3.8"
+
+services:
+  compaction-proxy:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: llm-compaction-proxy:latest
+    container_name: compaction-proxy
+    restart: unless-stopped
+    ports:
+      - "8198:8198"
+    environment:
+      # 上游 LLM API(必填,改为你的真实提供商)
+      COMPACTION_PROXY_UPSTREAM: ${COMPACTION_PROXY_UPSTREAM:-https://api.openai.com/v1}
+      # 压缩模型
+      COMPACTION_PROXY_MODEL: ${COMPACTION_PROXY_MODEL:-gpt-4o-mini}
+      # Anthropic 格式上游设为 true
+      COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC: ${COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC:-auto}
+      # 代理访问密钥(可选,设置后仅授权客户端可访问)
+      COMPACTION_PROXY_API_SECRET: ${COMPACTION_PROXY_API_SECRET:-}
+      # 监听端口
+      COMPACTION_PROXY_PORT: "8198"
+    volumes:
+      # 持久化会话/记忆数据
+      - proxy-data:/app/data
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8198/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  proxy-data:

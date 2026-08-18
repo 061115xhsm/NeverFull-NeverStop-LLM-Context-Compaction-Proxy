@@ -9,24 +9,24 @@
 
 | # | 方向 | 现状(代码核实) | 待办(路线图目标) |
 |---|------|---------------|------------------|
-| 1 | 语义保真度 | 仅有 token 数安全验证 `verify_compaction_safety`,无语义校验 | 引入 bge-small/SimCSE 语义相似度,92% 保真底线,不达标降强度重试 |
+| 1 | 语义保真度 | ✅ 已实现 `fidelity.py`(FidelityScorer/AdaptiveCompactor/QualityBreaker) | 引入 bge-small/SimCSE 语义相似度,92% 保真底线,不达标降强度重试 |
 | 2 | 查询相关性加权 | 固定保留轮次 + 自适应 keep_turns | 基于当前 query 对历史相关性打分,高相关 100% 保留,无关深度压缩 |
-| 3 | 分模态压缩 | 已有 code/log/JSON 专用压缩器 | AST 语法解析保留签名、差分压缩、结构化折叠、多模态图片管线 |
+| 3 | 分模态压缩 | ✅ 已实现 `compression_advanced.py`(AST/Diff/StructFold/Reversible) | AST 语法解析保留签名、差分压缩、结构化折叠、多模态图片管线 |
 | 4 | 增量压缩 | 已有 per-session prior_summary 增量 | L1/L2 分层迭代、滑动窗口分级压缩 |
 | 5 | 专用压缩小模型 | 通用 LLM 做摘要 | Qwen2-7B / Llama 3-8B 微调专用摘要模型(提速 5-10x,降本 90%) |
-| 6 | 三层记忆 | 双层(SemanticMemory + SessionStore) | 工作/短期/长期三层记忆架构 |
-| 7 | 知识图谱 | 向量语义存储,无关系推理 | 向量库 + 知识图谱混合存储,实体/关系/属性抽取 |
+| 6 | 三层记忆 | ✅ 已实现 `memory_engine.py`(ThreeLayerMemory/MemoryDecay) | 工作/短期/长期三层记忆架构 |
+| 7 | 知识图谱 | ✅ 已实现 `knowledge_graph.py`(KnowledgeGraph/HybridRetriever) | 向量库 + 知识图谱混合存储,实体/关系/属性抽取 |
 | 8 | 主动检索注入 | 固定注入最近 3 个会话背景知识 | 按 query 主动检索、按剩余空间动态调整注入量 |
 | 9 | 记忆衰减 | 记忆永久存储 | 权重评分(访问频率/重要性/时间衰减),低权重归档遗忘 |
-| 10 | 插件化架构 | 单文件脚本,CompressionEngine 可插拔 | 微内核 + 插件总线,能力全插件化 |
+| 10 | 插件化架构 | ✅ 已集成(V8 可选增强模块,8 个独立模块) | 微内核 + 插件总线,能力全插件化 |
 | 11 | 性能加速 | 纯 Python 实现 | Rust 扩展库 FFI(降延迟 40%+)、预测式异步预压缩、多级缓存 |
 | 12 | 分布式部署 | 本地 SQLite | PostgreSQL + Redis 共享存储,多实例负载均衡,Docker/K8s |
-| 13 | 协议兼容 | OpenAI/Anthropic/Gemini 三大格式 | OpenAI Responses API、Anthropic 批量消息、LangChain/LlamaIndex 适配 |
-| 14 | 基准评测 | 无量化评测 | 集成 LongBench / BFCL / SWE-bench,一键跑分对比报告 |
+| 13 | 协议兼容 | ✅ 已实现 `protocol_extra.py`(ResponsesAPI/LangChain/LlamaIndex) | OpenAI Responses API、Anthropic 批量消息、LangChain/LlamaIndex 适配 |
+| 14 | 基准评测 | ✅ 已实现 `benchmark/`(跑分 CLI + LongBench 适配器) | 集成 LongBench / BFCL / SWE-bench,一键跑分对比报告 |
 | 15 | 质量监控 | 熔断器(次数)+ /metrics 基础指标 | 语义保真度实时监控、质量熔断降级、OpenTelemetry 追踪 |
-| 16 | 数据安全 | API Key 脱敏 | PII 脱敏(身份证/手机号/邮箱)、落盘加密、纯内存模式 |
+| 16 | 数据安全 | ✅ 已实现 `security_enhanced.py`(PII/加密/多租户) | PII 脱敏(身份证/手机号/邮箱)、落盘加密、纯内存模式 |
 | 17 | 多租户权限 | 单密钥 | 多 API key 隔离、读写/管理权限分级、token 限额 |
-| 18 | 高可用容灾 | 单上游 | 多上游自动切换、四级降级(压缩→轻量→截断→透传) |
+| 18 | 高可用容灾 | ✅ 已实现 `observability.py`(Failover/GracefulDegrade/Metrics) | 多上游自动切换、四级降级(压缩→轻量→截断→透传) |
 | 19 | MemSkill 自进化 | 技能注册 + 关键词匹配 | 强化学习(任务成功率 + token 节省率)自动进化压缩策略 |
 | 20 | 可逆压缩 | 有损摘要(ARC 部分引用) | LLMLingua 令牌级压缩 + 语义摘要 + 引用索引,有损压缩无损还原 |
 | 21 | 预测式管理 | 达到 80% 阈值才压缩 | 基于对话历史/任务类型预测走向,后台预归档 |

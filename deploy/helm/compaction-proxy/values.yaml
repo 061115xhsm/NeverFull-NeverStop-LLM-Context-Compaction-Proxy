@@ -1,0 +1,44 @@
+# LLM Context Compaction Proxy — Helm Chart 值文件
+# 使用: helm install compaction-proxy ./deploy/helm/compaction-proxy
+
+# 镜像配置
+image:
+  repository: llm-compaction-proxy
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# 服务配置
+service:
+  type: ClusterIP
+  port: 8198
+
+# 副本数(多实例负载均衡;使用共享存储时 >1)
+replicaCount: 1
+
+# 资源限制
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+# 环境变量(上游 LLM 配置)
+env:
+  COMPACTION_PROXY_UPSTREAM: "https://api.openai.com/v1"
+  COMPACTION_PROXY_MODEL: "gpt-4o-mini"
+  COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC: "auto"
+  COMPACTION_PROXY_API_SECRET: ""
+  COMPACTION_PROXY_PORT: "8198"
+
+# 共享存储(PostgreSQL/Redis 配置示例)
+# 生产环境建议将会话/记忆迁移至共享存储以支持多实例
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 1Gi
+
+# 就绪/存活探针
+probes:
+  enabled: true

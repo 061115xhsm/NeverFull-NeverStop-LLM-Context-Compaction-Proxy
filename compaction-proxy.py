@@ -113,6 +113,63 @@ from typing import Optional
 import aiohttp
 from aiohttp import web
 
+# ── V8 可选增强模块(独立模块,导入失败不影响核心功能) ────────────────
+try:
+    from fidelity import FidelityScorer, AdaptiveCompactor, QualityBreaker, query_relevance_weighting
+    ENH_FIDELITY = True
+except Exception:
+    FidelityScorer = AdaptiveCompactor = QualityBreaker = query_relevance_weighting = None
+    ENH_FIDELITY = False
+
+try:
+    from memory_engine import ThreeLayerMemory, MemoryDecay, MemoryItem
+    ENH_MEMORY = True
+except Exception:
+    ThreeLayerMemory = MemoryDecay = MemoryItem = None
+    ENH_MEMORY = False
+
+try:
+    from knowledge_graph import KnowledgeGraph, HybridRetriever
+    ENH_KG = True
+except Exception:
+    KnowledgeGraph = HybridRetriever = None
+    ENH_KG = False
+
+try:
+    from compression_advanced import CodeCompressor, DiffCompressor, StructFoldCompressor, ReversibleCompactor
+    ENH_COMPRESS = True
+except Exception:
+    CodeCompressor = DiffCompressor = StructFoldCompressor = ReversibleCompactor = None
+    ENH_COMPRESS = False
+
+try:
+    from security_enhanced import PIIRedactor, EncryptedStore, TenantManager
+    ENH_SECURITY = True
+except Exception:
+    PIIRedactor = EncryptedStore = TenantManager = None
+    ENH_SECURITY = False
+
+try:
+    from protocol_extra import ResponsesAPIAdapter, LangChainAdapter, LlamaIndexAdapter, ReasoningPassthrough
+    ENH_PROTOCOL = True
+except Exception:
+    ResponsesAPIAdapter = LangChainAdapter = LlamaIndexAdapter = ReasoningPassthrough = None
+    ENH_PROTOCOL = False
+
+try:
+    from cache_engine import LRUCache, MultiLevelCache, PredictivePrecompressor
+    ENH_CACHE = True
+except Exception:
+    LRUCache = MultiLevelCache = PredictivePrecompressor = None
+    ENH_CACHE = False
+
+try:
+    from observability import FailoverManager, GracefulDegrader, MetricsCollector, Tracer
+    ENH_OBSERVABILITY = True
+except Exception:
+    FailoverManager = GracefulDegrader = MetricsCollector = Tracer = None
+    ENH_OBSERVABILITY = False
+
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
