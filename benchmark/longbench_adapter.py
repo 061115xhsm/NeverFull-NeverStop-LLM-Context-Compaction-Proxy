@@ -28,12 +28,18 @@ def load_longbench(path: str, limit: int = 20) -> List[Dict[str, Any]]:
     """
     加载 LongBench 格式评测集(JSONL)。
 
+    兼容两种格式:
+    1. 官方 LongBench:{"input": 问题, "context": 长文档, "answers": [...], ...}
+       → 返回 {"input": context(长文档), "query": input(问题), "answers": [...]}
+    2. 自建格式:{"input": 长文本, "query": ..., "answers": [...]}
+       → 原样返回
+
     Args:
-        path: JSONL 文件路径,每行含 input/answers 等字段
+        path: JSONL 文件路径
         limit: 最多加载条数
 
     Returns:
-        [{"input": str, "answers": list, "query": str}, ...]
+        [{"input": str(长上下文), "query": str(问题), "answers": list}, ...]
     """
     items: List[Dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
@@ -47,11 +53,19 @@ def load_longbench(path: str, limit: int = 20) -> List[Dict[str, Any]]:
                 d = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            items.append({
-                "input": d.get("input", ""),
-                "answers": d.get("answers", []),
-                "query": d.get("query", d.get("input", "")[:200]),
-            })
+            # 官方 LongBench 格式:input=问题, context=长文档
+            if "context" in d and d.get("context"):
+                items.append({
+                    "input": d.get("context", ""),
+                    "query": d.get("input", ""),
+                    "answers": d.get("answers", []),
+                })
+            else:
+                items.append({
+                    "input": d.get("input", ""),
+                    "answers": d.get("answers", []),
+                    "query": d.get("query", d.get("input", "")[:200]),
+                })
     return items
 
 

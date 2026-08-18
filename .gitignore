@@ -45,3 +45,7 @@ README.pdf
 *.bak-v6
 *.bak-pre-shield
 
+
+# Large LongBench dataset (download on demand)
+benchmark/data/longbench_data.zip
+benchmark/data/longbench/
