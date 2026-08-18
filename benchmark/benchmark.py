@@ -29,10 +29,12 @@ SAMPLES = [
         "query": "项目的核心算法是什么",
         "info_points": ["子模选择", "PACMS", "语义保真度"],
         "messages": [
-            {"role": "user", "content": "这个项目用到了哪些核心算法?比如压缩上下文的时候。"},
-            {"role": "assistant", "content": "我们用了 PACMS 子模选择算法来挑选最重要的消息,还引入了语义保真度量化确保压缩质量。"},
-            {"role": "user", "content": "那子模选择具体怎么工作的?"},
-            {"role": "assistant", "content": "PACMS 是贪心近似:每次选重要性/成本比最高的消息,直到预算耗尽,系统消息强制保留。"},
+            {"role": "user", "content": "这个项目用到了哪些核心算法?比如压缩上下文的时候。我们团队最近在调研长上下文 Agent 的工程方案,想了解具体的技术选型。"},
+            {"role": "assistant", "content": "我们用了 PACMS 子模选择算法来挑选最重要的消息,还引入了语义保真度量化确保压缩质量。PACMS 是论文 arXiv:2606.20047 提出的,核心思想是在预算约束下用贪心近似求解子模最大化,每条消息按重要性/成本比排序选择。"},
+            {"role": "user", "content": "那子模选择具体怎么工作的?预算不够的时候怎么处理?"},
+            {"role": "assistant", "content": "PACMS 是贪心近似:每次选重要性/成本比最高的消息,直到预算耗尽,系统消息强制保留。重要性评分融合了四个信号:语义 50%、近因 25%、类型 15%、质量 10%,还支持按 AFM 保真级别加权调整。预算不足时优先保证 system 消息完整。"},
+            {"role": "user", "content": "语义保真度量化是怎么实现的?会不会有额外的推理开销?"},
+            {"role": "assistant", "content": "FidelityScorer 优先用 bge-small 嵌入模型计算余弦相似度,无依赖时降级为 n-gram Jaccard。AdaptiveCompactor 设 0.92 保真底线,不达标自动降低压缩强度重试最多 3 次,QualityBreaker 在连续 3 次低保真时熔断暂停压缩。"},
         ],
     },
     {
@@ -40,9 +42,10 @@ SAMPLES = [
         "query": "调用了什么外部工具",
         "info_points": ["search_web", "read_file", "token_meter"],
         "messages": [
-            {"role": "user", "content": "请帮我查一下今天的天气。"},
-            {"role": "assistant", "content": "好的,我先调用 search_web 工具查询。"},
-            {"role": "assistant", "content": "工具返回结果后,我又用 read_file 读取了配置文件,并经过 token_meter 统计了消耗。"},
+            {"role": "user", "content": "请帮我查一下今天的天气,然后读取一下本地配置文件,最后统计一下我这次对话消耗了多少 token。"},
+            {"role": "assistant", "content": "好的,我先调用 search_web 工具查询今天的天气情况,工具会返回未来 7 天的天气预报数据,包括温度、湿度、风向和降水概率。"},
+            {"role": "assistant", "content": "天气查询完成后,我又用 read_file 读取了 /home/qq/proxy/config.yaml 配置文件,里面包含上游 API 地址、模型名称、超时时间等关键配置项。"},
+            {"role": "assistant", "content": "最后我调用了 token_meter 工具统计本次对话消耗,结果显示输入 1284 tokens、输出 356 tokens,总计 1640 tokens,并给出了优化建议:启用上下文压缩可以节省约 60% 的重复输入。"},
         ],
     },
     {
@@ -50,10 +53,12 @@ SAMPLES = [
         "query": "函数签名是什么",
         "info_points": ["def compact_messages", "session_id", "return summary"],
         "messages": [
-            {"role": "user", "content": "这个函数的签名能给我看看吗?"},
-            {"role": "assistant", "content": "def compact_messages(old_messages, api_key, session, session_id='default', _save_state=True): 它会返回 summary 字符串。"},
-            {"role": "user", "content": "session_id 参数有什么用?"},
-            {"role": "assistant", "content": "session_id 用于跨会话持久化 prior_summary,实现增量压缩。"},
+            {"role": "user", "content": "这个函数的签名能给我看看吗?我想知道参数类型和返回值,这样我可以正确调用它来处理长对话的压缩任务。"},
+            {"role": "assistant", "content": "def compact_messages(old_messages: list, api_key: str, session: aiohttp.ClientSession, session_id: str = 'default', _save_state: bool = True, selected_skills: list = None, system_prompt_override: str = None) -> Optional[str]: 它接收旧消息列表和 HTTP 会话,返回压缩后的摘要字符串。"},
+            {"role": "user", "content": "session_id 参数有什么用?它和跨会话记忆有什么关系吗?"},
+            {"role": "assistant", "content": "session_id 用于跨会话持久化 prior_summary,实现增量压缩——只对新增消息做摘要再与旧摘要合并,避免全量重压缩。它同时作为 SessionStore 的键,支持 FTS5 全文搜索和会话恢复。"},
+            {"role": "user", "content": "如果压缩失败会怎样?有没有降级保护机制?"},
+            {"role": "assistant", "content": "有完整的降级链路:压缩失败走轻量压缩,再失败走智能截断(角色预算分配),最后兜底纯透传。压缩前有 verify_compaction_safety 检查 token 必须变小,否则立即降级激进截断,防止上下文膨胀。"},
         ],
     },
 ]

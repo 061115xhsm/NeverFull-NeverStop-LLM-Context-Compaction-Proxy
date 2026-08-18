@@ -317,6 +317,29 @@ curl -X POST http://localhost:8198/v1/chat/completions \
 | `systemd/` | 服务模板 | systemd 用户服务单元 |
 | `LICENSE` | 许可证 | MIT 许可证文本 |
 
+### 模块清单(15 个模块)
+
+代理是模块化网关——核心 `compaction-proxy.py` + 可选增强模块(全部 `try/except`
+加载,缺失任一模块不影响核心功能):
+
+| 模块 | 职责 | 路线图 |
+|------|------|--------|
+| `compaction-proxy.py` | 核心网关:路由、协议转换、压缩流水线、认证 | — |
+| `fidelity.py` | 语义保真度评分、自适应压缩、质量熔断、查询加权 | #1 #2 #15 |
+| `memory_engine.py` | 三层记忆(工作/短期/长期)+ 记忆衰减遗忘 | #6 #8 #9 |
+| `knowledge_graph.py` | 知识图谱 + 混合召回(关键词/图谱/文本) | #7 |
+| `compression_advanced.py` | AST 代码压缩、差分、结构化折叠、可逆压缩 | #3 #20 |
+| `incremental_compaction.py` | L1/L2 分层增量压缩 + 滑动窗口 | #4 |
+| `model_hub.py` | 可插拔摘要模型(LLM / 本地小模型双后端) | #5 |
+| `security_enhanced.py` | PII 脱敏、落盘加密、多租户权限 | #16 #17 |
+| `protocol_extra.py` | Responses API、LangChain/LlamaIndex 适配、推理透传 | #13 |
+| `cache_engine.py` | 多级缓存(LRU + SQLite)+ cache_control 断点 | #11 |
+| `async_precompressor.py` | 预测式异步预压缩调度器 | #21 |
+| `observability.py` | 多上游容灾、四级降级、指标采集、追踪 | #15 #18 |
+| `storage_backend.py` | 存储抽象:SQLite / PostgreSQL / Redis | #12 |
+| `rust_ffi.py` + `rust/` | Rust FFI 加速(CJK token 计数等,含纯 Python 降级) | #11 |
+| `benchmark/` | 基准评测 CLI(三种策略对比)+ LongBench 适配器 | #14 |
+
 ### 主程序(`compaction-proxy.py`)
 
 包含代理的全部核心逻辑:Provider 抽象层(OpenAI/Anthropic/Gemini)、压缩引擎、语义记忆、会话存储、技能注册表、熔断器与抖动检测等。代码按模块化组织,每个类与函数职责单一。

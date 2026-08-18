@@ -469,6 +469,28 @@ All settings are environment variables with sensible defaults. See [.env.example
 
 ## Architecture
 
+### Module Map (15 modules)
+
+The proxy is a modular gateway — core `compaction-proxy.py` plus optional enhancement modules (loaded via `try/except`, missing modules never break the core):
+
+| Module | Role | Roadmap |
+|--------|------|---------|
+| `compaction-proxy.py` | Core gateway: routing, protocol conversion, compaction pipeline, auth | — |
+| `fidelity.py` | Semantic fidelity scoring, adaptive compaction, quality breaker, query weighting | #1 #2 #15 |
+| `memory_engine.py` | Three-layer memory (working/short/long) + decay & forgetting | #6 #8 #9 |
+| `knowledge_graph.py` | Knowledge graph + hybrid retrieval (keyword/graph/text) | #7 |
+| `compression_advanced.py` | AST code compression, diff, struct folding, reversible compaction | #3 #20 |
+| `incremental_compaction.py` | L1/L2 layered incremental compaction + sliding window | #4 |
+| `model_hub.py` | Pluggable summary models (LLM / local small-model backends) | #5 |
+| `security_enhanced.py` | PII redaction, encrypted store, multi-tenant permissions | #16 #17 |
+| `protocol_extra.py` | Responses API, LangChain/LlamaIndex adapters, reasoning passthrough | #13 |
+| `cache_engine.py` | Multi-level cache (LRU + SQLite) + cache_control breakpoints | #11 |
+| `async_precompressor.py` | Predictive async precompression scheduler | #21 |
+| `observability.py` | Multi-upstream failover, graceful degradation, metrics, tracing | #15 #18 |
+| `storage_backend.py` | Storage abstraction: SQLite / PostgreSQL / Redis | #12 |
+| `rust_ffi.py` + `rust/` | Rust FFI accelerators (CJK token count etc.) with pure-Python fallback | #11 |
+| `benchmark/` | Benchmark CLI (baseline/summary/adaptive) + LongBench adapter | #14 |
+
 ```
 Request Flow:
   Agent → Proxy → [context check] → Upstream
