@@ -2,7 +2,7 @@
 
 > **永不超限,永不停歇 · Never Full, Never Stop**
 
-**阅读其他语言版本:** [English](README.md)
+**阅读其他语言版本:** [English](https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy/blob/main/README.md)
 
 > 中文使用指南 · 2026 年 8 月
 

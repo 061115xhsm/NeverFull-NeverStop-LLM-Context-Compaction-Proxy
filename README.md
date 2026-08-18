@@ -2,7 +2,7 @@
 
 > **永不超限,永不停歇 · Never Full, Never Stop**
 
-**Read this in other languages:** [简体中文](README-zh.md)
+**Read this in other languages:** [简体中文](https://github.com/061115xhsm/NeverFull-NeverStop-LLM-Context-Compaction-Proxy/blob/main/README-zh.md)
 
 A transparent, zero-config context compaction proxy for LLM APIs. Sit it between your AI agent and any LLM provider — it automatically compresses conversation context when it approaches the model's token limit, keeping your agents running indefinitely without hitting context window walls.
 
