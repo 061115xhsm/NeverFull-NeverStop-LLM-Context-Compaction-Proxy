@@ -859,6 +859,10 @@ class CompactionCache:
 
 compaction_cache = CompactionCache(ttl_seconds=1800)
 
+# ── V8: 多级缓存增强(可选) ──────────────────────────────────────────
+multi_level_cache = MultiLevelCache(lru_capacity=1024) if ENH_CACHE and MultiLevelCache is not None else None
+predictive_precompressor = PredictivePrecompressor(threshold=0.75) if ENH_CACHE and PredictivePrecompressor is not None else None
+
 # ── 指标 ──────────────────────────────────────────────────────────────
 
 class Metrics:
@@ -881,6 +885,11 @@ class Metrics:
 
 
 metrics = Metrics()
+
+# ── V8: 语义保真度增强组件(可选) ────────────────────────────────────
+SEMANTIC_FIDELITY_FLOOR = float(os.environ.get("COMPACTION_PROXY_FIDELITY_FLOOR", "0.92"))
+semantic_fidelity_scorer = FidelityScorer() if ENH_FIDELITY and FidelityScorer is not None else None
+quality_breaker = QualityBreaker(failure_threshold=3, cooldown_seconds=60) if ENH_FIDELITY and QualityBreaker is not None else None
 
 # ── V4: Episodic-Semantic Dual-Layer Memory ──────────────────────────
 
@@ -6003,6 +6012,29 @@ async def do_compaction(
             body["messages"] = truncated
             return body
 
+        # V8: 语义保真度校验(可选增强)——压缩后评估语义相似度,
+        # 低于阈值记录指标并降级为轻量截断(不阻断流程)。
+        if ENH_FIDELITY and FidelityScorer is not None and semantic_fidelity_scorer is not None:
+            try:
+                orig_text = "\n".join(str(m.get("content", "")) for m in original_messages)
+                comp_text = "\n".join(str(m.get("content", "")) for m in body.get("messages", []))
+                fid = semantic_fidelity_scorer.score(orig_text, comp_text)
+                metrics.inc("fidelity_scored")
+                if fid < SEMANTIC_FIDELITY_FLOOR:
+                    metrics.inc("low_fidelity_total")
+                    quality_breaker.record(fid, SEMANTIC_FIDELITY_FLOOR)
+                    logger.warning(
+                        f"Low fidelity ({fid:.3f} < {SEMANTIC_FIDELITY_FLOOR}), "
+                        f"degrading to lighter compaction"
+                    )
+                    context_limit = get_model_context_limit(original_model)
+                    target = context_limit - RESPONSE_BUDGET - SAFETY_MARGIN
+                    body["messages"] = aggressive_truncate_messages(original_messages, target)
+                else:
+                    quality_breaker.record(fid, SEMANTIC_FIDELITY_FLOOR)
+            except Exception as e:
+                logger.debug(f"Fidelity check skipped (non-fatal): {e}")
+
         if is_preemptive:
             return body
 
@@ -6934,6 +6966,12 @@ async def handle_metrics(request: web.Request) -> web.Response:
     lines.append(f"compaction_proxy_circuit_breaker_state {cb_state_val}")
     lines.append(f"# TYPE compaction_proxy_cache_size gauge")
     lines.append(f"compaction_proxy_cache_size {compaction_cache.size}")
+    if multi_level_cache is not None:
+        lines.append(f"# TYPE compaction_proxy_multilevel_l1_size gauge")
+        lines.append(f"compaction_proxy_multilevel_l1_size {multi_level_cache.l1.size}")
+    if predictive_precompressor is not None:
+        lines.append(f"# TYPE compaction_proxy_predictive_ready gauge")
+        lines.append(f"compaction_proxy_predictive_ready 1")
     lines.append(f"# TYPE compaction_proxy_arc_log_size gauge")
     lines.append(f"compaction_proxy_arc_log_size {arc_log.size}")
     lines.append(f"# TYPE compaction_proxy_thrashing gauge")
