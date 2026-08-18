@@ -133,6 +133,78 @@ response = client.chat.completions.create(
 
 Set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=auto` (default) for automatic detection, or `true`/`false` to override.
 
+## Connecting Your LLM Provider
+
+The proxy sits between your agent and any LLM API. **One variable decides the upstream**: `COMPACTION_PROXY_UPSTREAM`. Everything else is optional.
+
+### OpenAI / OpenAI-Compatible (OpenAI, DeepSeek, Ollama, vLLM, LiteLLM, OpenRouter, Groq, etc.)
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://api.openai.com/v1      # or any OpenAI-compatible endpoint
+export COMPACTION_PROXY_MODEL=gpt-4o-mini                        # compaction model
+python3 compaction-proxy.py
+```
+
+Works out of the box — the proxy forwards requests and converts the compaction result back to the OpenAI format your agent expects.
+
+### Anthropic (Claude)
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://api.anthropic.com
+export COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true
+export COMPACTION_PROXY_MODEL=claude-sonnet-4-5
+python3 compaction-proxy.py
+```
+
+The proxy speaks the Anthropic Messages API (`/v1/messages`), so Anthropic-native agents connect directly. Format conversion is applied automatically for OpenAI-format agents pointing at the same proxy.
+
+### Google Gemini
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://generativelanguage.googleapis.com
+export COMPACTION_PROXY_MODEL=gemini-2.0-flash
+python3 compaction-proxy.py
+```
+
+The API key travels in the `x-goog-api-key` header (never in the URL), so it stays out of access logs.
+
+### DeepSeek
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=https://api.deepseek.com/v1
+export COMPACTION_PROXY_MODEL=deepseek-chat
+python3 compaction-proxy.py
+```
+
+DeepSeek context windows (deepseek-chat / coder / r1 / v3, 128K) are pre-registered, so pressure estimation works without extra setup.
+
+### Local Models (Ollama)
+
+```bash
+export COMPACTION_PROXY_UPSTREAM=http://localhost:11434/v1   # default
+export COMPACTION_PROXY_MODEL=llama3.1
+python3 compaction-proxy.py
+```
+
+### Verify It Works
+
+```bash
+# Health check
+curl http://localhost:8198/health
+
+# Send a test request through the proxy (OpenAI format)
+curl -X POST http://localhost:8198/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+### Tips
+
+- **Compaction model ≠ main model**: set `COMPACTION_PROXY_COMPACTION_UPSTREAM` / `COMPACTION_PROXY_COMPACTION_API_KEY` to use a cheaper model for summarization while your agent uses the main model.
+- **Anthropic-format MaaS proxies** (e.g. iFlytek coding API): set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true` so request conversion is applied.
+- **Never hardcode secrets in config**: use environment variables or the `apiKeyEnv` pattern; the proxy never logs API keys.
+
 ## 40 Compression Techniques
 
 ### V3 Core (8)
