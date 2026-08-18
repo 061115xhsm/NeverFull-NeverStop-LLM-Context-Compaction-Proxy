@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.request
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -43,12 +44,13 @@ class SummaryModel(ABC):
 
 class LLMBackedModel(SummaryModel):
     """
-    通用 LLM 摘要实现:调用 OpenAI 兼容 /chat/completions 接口。
+    通用 LLM 摘要实现:支持 OpenAI 兼容 /chat/completions 与 Anthropic /v1/messages。
 
-    环境变量:
-      SUMMARY_MODEL_URL: 上游地址(默认 http://127.0.0.1:8198/v1/chat/completions)
-      SUMMARY_MODEL_NAME: 模型名(默认 gpt-4o-mini)
-      SUMMARY_API_KEY: 上游密钥(默认空)
+    环境变量(自动探测,无需全部设置):
+      SUMMARY_MODEL_URL: 上游地址(默认探测 ANTHROPIC_BASE_URL → 127.0.0.1:8198)
+      SUMMARY_MODEL_NAME: 模型名(默认探测 ANTHROPIC_MODEL → gpt-4o-mini)
+      SUMMARY_API_KEY: 上游密钥(默认探测 ANTHROPIC_API_KEY / OPENAI_API_KEY)
+      SUMMARY_API_STYLE: "openai" | "anthropic"(默认按 URL 自动判断)
     """
 
     def __init__(
@@ -56,16 +58,35 @@ class LLMBackedModel(SummaryModel):
         url: Optional[str] = None,
         model: Optional[str] = None,
         api_key: Optional[str] = None,
+        api_style: Optional[str] = None,
     ) -> None:
-        self.url = url or os.environ.get(
-            "SUMMARY_MODEL_URL", "http://127.0.0.1:8198/v1/chat/completions"
-        )
-        self.model = model or os.environ.get("SUMMARY_MODEL_NAME", "gpt-4o-mini")
-        self.api_key = api_key or os.environ.get("SUMMARY_API_KEY", "")
+        # URL:显式 > SUMMARY_MODEL_URL > ANTHROPIC_BASE_URL > 默认
+        self.url = url or os.environ.get("SUMMARY_MODEL_URL") \
+            or os.environ.get("ANTHROPIC_BASE_URL", "").rstrip("/") \
+            or "http://127.0.0.1:8198"
+        # 模型:显式 > SUMMARY_MODEL_NAME > ANTHROPIC_MODEL > 默认
+        self.model = model or os.environ.get("SUMMARY_MODEL_NAME") \
+            or os.environ.get("ANTHROPIC_MODEL", "") \
+            or "gpt-4o-mini"
+        # Key:显式 > SUMMARY_API_KEY > ANTHROPIC_API_KEY > OPENAI_API_KEY > 空
+        self.api_key = api_key or os.environ.get("SUMMARY_API_KEY") \
+            or os.environ.get("ANTHROPIC_API_KEY") \
+            or os.environ.get("OPENAI_API_KEY") \
+            or ""
+        # 风格:显式 > SUMMARY_API_STYLE > URL 自动判断
+        if api_style:
+            self.api_style = api_style.lower()
+        else:
+            self.api_style = (os.environ.get("SUMMARY_API_STYLE") or "").lower()
+        if not self.api_style:
+            # 含 anthropic/claude/coding-api 视为 Anthropic 格式
+            self.api_style = "anthropic" if re.search(
+                r"anthropic|claude|coding-api", self.url
+            ) else "openai"
 
     @property
     def name(self) -> str:
-        return f"llm:{self.model}"
+        return f"llm:{self.api_style}:{self.model}"
 
     def summarize(self, messages: List[dict], max_tokens: int = 2000,
                   instructions: str = "") -> Optional[str]:
@@ -75,28 +96,58 @@ class LLMBackedModel(SummaryModel):
         )
         if instructions:
             sys_prompt += f"\n\nAdditional focus: {instructions}"
+        conversation = "\n".join(f"{m.get('role','?')}: {m.get('content','')}" for m in messages)
+
+        if self.api_style == "anthropic":
+            return self._summarize_anthropic(conversation, sys_prompt, max_tokens)
+        return self._summarize_openai(conversation, sys_prompt, max_tokens)
+
+    def _summarize_openai(self, conversation: str, sys_prompt: str, max_tokens: int) -> Optional[str]:
+        url = self.url.rstrip("/") + "/v1/chat/completions" \
+            if not self.url.endswith("/chat/completions") else self.url
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
             "temperature": 0.3,
             "messages": [
                 {"role": "system", "content": sys_prompt},
-                {"role": "user", "content": "CONVERSATION TO SUMMARIZE:\n\n" +
-                 "\n".join(f"{m.get('role','?')}: {m.get('content','')}" for m in messages)},
+                {"role": "user", "content": "CONVERSATION TO SUMMARIZE:\n\n" + conversation},
             ],
         }
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(
-            self.url, data=json.dumps(payload).encode(),
-            headers=headers, method="POST",
-        )
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                     headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read())
-            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-            return content or None
+            return data.get("choices", [{}])[0].get("message", {}).get("content") or None
+        except Exception:
+            return None
+
+    def _summarize_anthropic(self, conversation: str, sys_prompt: str, max_tokens: int) -> Optional[str]:
+        url = self.url.rstrip("/") + "/v1/messages" \
+            if not self.url.endswith("/v1/messages") else self.url
+        payload = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": 0.3,
+            "system": sys_prompt,
+            "messages": [{"role": "user", "content": "CONVERSATION TO SUMMARIZE:\n\n" + conversation}],
+        }
+        headers = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+                                     headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
+            blocks = data.get("content", [])
+            text = "".join(b.get("text", "") for b in blocks if isinstance(b, dict))
+            return text or None
         except Exception:
             return None
 
