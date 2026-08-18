@@ -19,52 +19,102 @@ A transparent, zero-config context compaction proxy for LLM APIs. Sit it between
 | **Overflow Recovery** | Compress + retry on context overflow errors |
 | **Incremental Compaction** | Only summarize new messages since last compaction (CoMem) |
 | **Parallel Compaction** | Split large contexts into parallel blocks |
-| **Dual-Layer Compression** | Gateway (85% reduction) + Agent (50% of L1) |
-| **CJK-Aware Token Estimation** | Accurate CJK/ASCII/other token counting |
-| **Compaction Safety Verification** | Compacted result must be smaller than original |
-| **Smart Truncation** | Role-based budget allocation |
+| **Parallel Summary Merge** | Merge parallel block summaries into one cohesive summary |
+| **Dual-Layer Compression** | Gateway (85% reduction) + Agent (50% of L1), three fallback paths |
+| **CJK-Aware Token Estimation** | Accurate CJK/ASCII/other token counting (two-stage: fast + accurate) |
+| **Compaction Safety Verification** | Compacted result must be smaller than original, else aggressive truncation |
+| **Smart Truncation** | Role-based budget allocation (head/tail split) |
 | **Identifier Preservation** | Keep code identifiers intact during compression |
-| **Compaction Cache** | 30-min TTL, avoids re-compressing unchanged context |
+| **Mandatory Identifier List** | Force-preserve UUIDs/hashes/URLs/file names verbatim in summaries |
+| **Compaction Cache** | 30-min TTL, instruction-aware salt keys, avoids re-compressing unchanged context |
+| **Compaction-Item Pruning** | Prune low-value artifacts left by previous compactions |
+| **Query Placement Optimization** | Query-at-end, tool-pair adjacency, recent-window reordering |
+| **Cache-Optimized Ordering** | Layer-hash-aware message reorder + `cache_control` breakpoints |
+| **Structure-Aware Tool Output Compression** | Dedicated compressors for code / logs / JSON outputs |
+| **Manual Compaction (`/compact`)** | Like Claude Code's /compact — force compact any session |
+| **Aggressive Truncation Fallback** | Degrade to truncation when compaction fails or grows |
 
 ### 🗂️ Memory & Session
 | Feature | Description |
 |---------|-------------|
-| **Semantic Memory** | Episodic-semantic dual-layer memory (arXiv:2605.17625) |
+| **Semantic Memory** | Episodic-semantic dual-layer memory (arXiv:2605.17625), 6 knowledge slots |
 | **Cross-Session Memory + FTS5** | SQLite session persistence with full-text search |
-| **User Profile Memory** | Persistent user preferences (USER.md) |
+| **User Profile Memory** | Persistent user preferences (USER.md), bounded persistence |
+| **Session Transcript Archive** | Save/restore raw transcripts for session resume |
+| **Session Resume** | Resume a session from transcript + summary (`POST /sessions/{id}/resume`) |
+| **Background Knowledge Injection** | Inject recent session knowledge into compaction prompts |
+| **Session Context Injection** | Auto-inject session context into outgoing requests |
 | **ARC References** | Replace lengthy tool results with ID references |
-| **Commitment Extraction** | Extract and preserve commitments (CCL) |
+| **ARC Persistent Recall** | Persist ARC entries to DB, recall via `GET /arc/{arc_id}` |
+| **Commitment Extraction** | Extract and preserve commitments (CCL) — goals/constraints/decisions/errors |
+| **LLM Memory Extraction** | LLM-driven knowledge extraction with regex fallback |
 | **Thought Masking** | Strip reasoning_content to save tokens |
 | **Secret Redaction** | Auto-redact API keys/JWT/passwords/tokens |
+| **Orphan Tool Pair Sanitization** | Clean up dangling tool_call/tool_result pairs |
+| **Tool Pair Adjacency Fix** | Repair non-adjacent tool call/result ordering |
 
 ### 🔌 Provider & Protocol
 | Feature | Description |
 |---------|-------------|
-| **Provider Abstraction Layer** | Universal OpenAI/Anthropic/Gemini compatibility |
+| **Provider Abstraction Layer** | Universal OpenAI/Anthropic/Gemini compatibility (ABC) |
 | **Auto Provider Detection** | Detect format from model name / headers / URL |
-| **OpenAI↔Anthropic Conversion** | Bidirectional request/response format conversion |
+| **OpenAI→Anthropic Request Conversion** | Full field mapping incl. tool_calls → tool_use |
+| **Anthropic→OpenAI Response Conversion** | Content/thinking/tool_use mapped back to OpenAI |
 | **SSE Streaming Conversion** | Anthropic SSE → OpenAI SSE event-by-event |
+| **Anthropic Thinking-Only Retry** | Auto streaming retry when response has only empty thinking blocks |
 | **Separate Compaction Provider** | Independent upstream & API key for compaction model |
+| **Gemini Header Auth** | `x-goog-api-key` header, never in URL/logs |
 | **Model Registry** | 67+ models with known context limits |
+| **Passthrough Routing** | Any unmatched path transparently forwarded upstream |
 
 ### 🛡️ Reliability & Security
 | Feature | Description |
 |---------|-------------|
 | **Circuit Breaker** | 3 failures → 60s cooldown, three-state machine |
-| **Thrashing Detection** | Detect compaction loops (3 compacts / 5 msgs) |
+| **Thrashing Detection** | Detect compaction loops (3 compacts / 5 msgs) → aggressive truncation |
 | **Auth (require_auth)** | 22+ endpoints protected; loopback-only when no secret |
-| **Gemini Key via Header** | `x-goog-api-key` header, never in URL/logs |
-| **Concurrency Safety** | Thread-locked semantic memory, race-free prompts |
-| **Pre/Post Compaction Hooks** | HTTP webhooks before/after compaction |
-| **Health & Metrics Endpoints** | `/health`, `/metrics` for monitoring |
+| **Concurrency Safety** | Thread-locked semantic memory, race-free prompts (parameter-passed) |
+| **Pre/Post Compaction Hooks** | HTTP webhooks before/after compaction (blockable) |
+| **Health & Metrics Endpoints** | `/health`, `/metrics` (Prometheus-style counters) |
+| **Adaptive Keep-Turns** | Auto-reduce kept turns when conversation is short |
+| **Retry with Shrinking Window** | Retry compaction with fewer turns per attempt |
 
 ### 🤖 MemSkill (Self-Evolving, V7)
 | Feature | Description |
 |---------|-------------|
-| **Skill Registry** | CRUD + activation lifecycle + snapshot rollback |
+| **Skill Registry** | CRUD + activation lifecycle + snapshot rollback (persisted to SQLite) |
 | **Skill Controller** | Keyword matching + Gumbel-Top-K selection |
-| **Parameter Override Pipeline** | Importance weights + fidelity multipliers |
+| **Parameter Override Pipeline** | Importance weights + fidelity multipliers per skill |
 | **DELETE-type Skill Pipeline Skip** | Skip semantic extraction for DELETE operations |
+| **Skill Performance Tracking** | Reward/success stats per skill (`/skills/{id}/performance`) |
+| **Skill Trajectories** | Recent compaction trajectories (`/skills/trajectories`) |
+| **Skill Designer** | Auto-design new skills (`/skills/designer/trigger`) |
+
+### 🔌 HTTP API Endpoints (31)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/chat/completions` (+ `/v1/chat/completions`) | OpenAI-compatible chat (streaming & non-streaming) |
+| POST | `/v1/messages` | Anthropic Messages API |
+| POST | `/compact` | Manual compaction of a session |
+| POST | `/summarize` | Summary-only endpoint for CompactionProvider plugins |
+| POST | `/session` | Create a session |
+| GET | `/sessions/search` | FTS5 full-text session search |
+| GET | `/sessions/recent` | Recent sessions |
+| GET | `/sessions/{id}` | Session detail |
+| GET | `/sessions/{id}/transcript` | Raw transcript export |
+| POST | `/sessions/{id}/resume` | Resume a session |
+| GET | `/profile` · POST `/profile` | User profile get/set |
+| GET | `/memory` · DELETE `/memory` | Semantic memory get/clear |
+| GET | `/arc/{arc_id}` | ARC reference recall |
+| GET | `/skills` · GET `/skills/{id}` | Skill list/detail |
+| POST | `/skills` | Create skill (draft) |
+| POST | `/skills/{id}/activate` · `/deprecate` | Skill lifecycle |
+| POST | `/skills/{id}/rollback` | Rollback to snapshot version |
+| GET | `/skills/{id}/performance` | Skill reward stats |
+| GET | `/skills/trajectories` | Compaction trajectories |
+| POST | `/skills/designer/trigger` | Trigger skill designer |
+| GET | `/health` · `/metrics` | Health & metrics |
+| ANY | `/{path:.*}` | Passthrough to upstream |
 
 ---
 

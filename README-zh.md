@@ -32,56 +32,107 @@
 | **溢出恢复(Overflow Recovery)** | 溢出错误时自动压缩并重试 |
 | **增量压缩(Incremental Compaction)** | 只摘要自上次压缩后的新增消息(CoMem) |
 | **并行压缩(Parallel Compaction)** | 大上下文分块并行压缩 |
-| **双层压缩(Dual-Layer Compression)** | 网关层(85% 缩减)+ Agent 层(L1 的 50%) |
-| **CJK 感知 Token 估算** | 精确统计中文/英文/其他字符的 token 数 |
-| **压缩安全验证** | 压缩结果必须小于原文,否则降级截断 |
-| **智能截断(Smart Truncation)** | 基于角色的预算分配 |
+| **并行摘要合并** | 将并行分块摘要合并为一份连贯摘要 |
+| **双层压缩(Dual-Layer Compression)** | 网关层(85% 缩减)+ Agent 层(L1 的 50%),三种降级路径 |
+| **CJK 感知 Token 估算** | 精确统计中文/英文/其他字符 token 数(两阶段:快速 + 精确) |
+| **压缩安全验证** | 压缩结果必须小于原文,否则降级为激进截断 |
+| **智能截断(Smart Truncation)** | 基于角色的预算分配(头尾拆分) |
 | **标识符保留** | 压缩时保持代码标识符完整 |
-| **压缩缓存** | 30 分钟 TTL,避免重复压缩未变化上下文 |
+| **强制标识符列表** | 摘要中原样保留 UUID/哈希/URL/文件名 |
+| **压缩缓存** | 30 分钟 TTL,指令感知 salt 键,避免重复压缩未变化上下文 |
+| **压缩项剪枝** | 清理上次压缩遗留的低价值产物 |
+| **查询位置优化** | 查询置尾、工具对邻接、近期窗口重排 |
+| **缓存优化排序** | 层哈希感知重排 + `cache_control` 断点 |
+| **结构感知工具输出压缩** | 代码/日志/JSON 专用压缩器 |
+| **手动压缩(`/compact`)** | 类似 Claude Code 的 /compact,可强制压缩任意会话 |
+| **激进截断兜底** | 压缩失败或膨胀时降级为截断 |
 
 ### 🗂️ 记忆与会话
 
 | 功能 | 说明 |
 |------|------|
-| **语义记忆(Semantic Memory)** | 情节—语义双层记忆(arXiv:2605.17625) |
+| **语义记忆(Semantic Memory)** | 情节—语义双层记忆(arXiv:2605.17625),6 类知识槽位 |
 | **跨会话记忆 + FTS5** | SQLite 会话持久化 + 全文搜索 |
-| **用户画像记忆** | 持久化用户偏好(USER.md) |
-| **ARC 地址化引用** | 长工具结果替换为 ID 引用,可回查原文 |
-| **承诺提取(CCL)** | 提取并保留对话中的目标/约束/决策 |
+| **用户画像记忆** | 持久化用户偏好(USER.md),有界持久化 |
+| **会话转录存档** | 保存/恢复原始转录以支持会话恢复 |
+| **会话恢复** | 从转录 + 摘要恢复会话(`POST /sessions/{id}/resume`) |
+| **背景知识注入** | 将近期会话知识注入压缩提示 |
+| **会话上下文注入** | 自动向出站请求注入会话上下文 |
+| **ARC 地址化引用** | 长工具结果替换为 ID 引用 |
+| **ARC 持久化回查** | ARC 条目持久化到数据库,经 `GET /arc/{arc_id}` 回查 |
+| **承诺提取(CCL)** | 提取并保留目标/约束/决策/错误 |
+| **LLM 记忆提取** | LLM 驱动知识提取,正则兜底 |
 | **思考掩码** | 剥离推理内容以节省 token |
 | **密钥脱敏** | 自动脱敏 API Key/JWT/密码/Token |
+| **孤儿工具对清理** | 清理悬空的 tool_call/tool_result 对 |
+| **工具对邻接修复** | 修复非邻接的工具调用/结果顺序 |
 
 ### 🔌 Provider 与协议
 
 | 功能 | 说明 |
 |------|------|
-| **Provider 抽象层** | 通用 OpenAI/Anthropic/Gemini 兼容 |
+| **Provider 抽象层** | 通用 OpenAI/Anthropic/Gemini 兼容(ABC) |
 | **自动 Provider 探测** | 依据模型名/请求头/URL 自动识别格式 |
-| **OpenAI↔Anthropic 转换** | 双向请求/响应格式转换 |
+| **OpenAI→Anthropic 请求转换** | 完整字段映射,含 tool_calls → tool_use |
+| **Anthropic→OpenAI 响应转换** | content/thinking/tool_use 映射回 OpenAI |
 | **SSE 流式转换** | Anthropic SSE → OpenAI SSE 逐事件转换 |
+| **Anthropic 仅思考重试** | 响应仅含空思考块时自动流式重试 |
 | **独立压缩 Provider** | 压缩模型可使用独立上游与密钥 |
+| **Gemini 密钥走请求头** | `x-goog-api-key` header,绝不进 URL/日志 |
 | **模型注册表** | 67+ 已知上下文窗口的模型 |
+| **透传路由** | 任意未匹配路径透明转发上游 |
 
 ### 🛡️ 可靠性与安全
 
 | 功能 | 说明 |
 |------|------|
 | **熔断器(Circuit Breaker)** | 3 次失败 → 60 秒冷却,三状态机 |
-| **抖动检测(Thrashing Detection)** | 检测压缩循环(3 次 / 5 条消息) |
+| **抖动检测(Thrashing Detection)** | 检测压缩循环(3 次 / 5 条消息)→ 激进截断 |
 | **端点认证(require_auth)** | 22+ 端点受保护;无密钥时仅回环放行 |
-| **Gemini 密钥走请求头** | `x-goog-api-key` header,绝不进 URL/日志 |
-| **并发安全** | 语义记忆线程锁、无竞态提示词 |
-| **压缩前后 Hooks** | 压缩前后的 HTTP webhook |
-| **健康与指标端点** | `/health`、`/metrics` 监控接口 |
+| **并发安全** | 语义记忆线程锁、无竞态提示词(参数传递) |
+| **压缩前后 Hooks** | 压缩前后的 HTTP webhook(可阻断) |
+| **健康与指标端点** | `/health`、`/metrics`(Prometheus 风格计数器) |
+| **自适应保留轮次** | 对话过短时自动下调保留轮次 |
+| **收缩窗口重试** | 每次重试递减保留轮次 |
 
 ### 🤖 MemSkill(自演进技能,V7)
 
 | 功能 | 说明 |
 |------|------|
-| **技能注册表** | CRUD + 激活生命周期 + 快照回滚 |
+| **技能注册表** | CRUD + 激活生命周期 + 快照回滚(持久化到 SQLite) |
 | **技能控制器** | 关键词匹配 + Gumbel-Top-K 选择 |
-| **参数覆盖管线** | 重要性权重 + 保真乘数 |
+| **参数覆盖管线** | 每技能的重要性权重 + 保真乘数 |
 | **DELETE 型技能管线跳过** | 跳过 DELETE 操作的语义提取 |
+| **技能性能追踪** | 每技能奖励/成功统计(`/skills/{id}/performance`) |
+| **技能轨迹** | 近期压缩轨迹(`/skills/trajectories`) |
+| **技能设计器** | 自动设计新技能(`/skills/designer/trigger`) |
+
+### 🔌 HTTP API 端点(31 个)
+
+| 方法 | 端点 | 说明 |
+|------|------|------|
+| POST | `/chat/completions`(+ `/v1/chat/completions`) | OpenAI 兼容对话(流式与非流式) |
+| POST | `/v1/messages` | Anthropic Messages API |
+| POST | `/compact` | 手动压缩会话 |
+| POST | `/summarize` | 供 CompactionProvider 插件使用的纯摘要端点 |
+| POST | `/session` | 创建会话 |
+| GET | `/sessions/search` | FTS5 全文会话搜索 |
+| GET | `/sessions/recent` | 近期会话 |
+| GET | `/sessions/{id}` | 会话详情 |
+| GET | `/sessions/{id}/transcript` | 原始转录导出 |
+| POST | `/sessions/{id}/resume` | 恢复会话 |
+| GET | `/profile` · POST `/profile` | 用户画像读取/设置 |
+| GET | `/memory` · DELETE `/memory` | 语义记忆读取/清空 |
+| GET | `/arc/{arc_id}` | ARC 引用回查 |
+| GET | `/skills` · GET `/skills/{id}` | 技能列表/详情 |
+| POST | `/skills` | 创建技能(草稿) |
+| POST | `/skills/{id}/activate` · `/deprecate` | 技能生命周期 |
+| POST | `/skills/{id}/rollback` | 回滚到快照版本 |
+| GET | `/skills/{id}/performance` | 技能奖励统计 |
+| GET | `/skills/trajectories` | 压缩轨迹 |
+| POST | `/skills/designer/trigger` | 触发技能设计器 |
+| GET | `/health` · `/metrics` | 健康与指标 |
+| ANY | `/{path:.*}` | 透传到上游 |
 
 ---
 
