@@ -419,6 +419,20 @@ Set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=auto` (default) for automatic detect
 
 ---
 
+## 📊 Benchmark — Official LongBench Results
+
+Validated on the **official THUDM/LongBench dataset** (`multifieldqa_zh`, real 6K-15K-char documents):
+
+| Strategy | Avg Compression | Avg Semantic Fidelity |
+|----------|-----------------|----------------------|
+| baseline (truncation) | 0.499 | **1.000** |
+| summary (naive) | **0.982** | 0.796 |
+| **adaptive (fidelity-gated)** | **0.710** | **0.993** |
+
+**Key takeaway**: `adaptive` delivers **71% compression with 99.3% semantic fidelity** — the only strategy that combines high compression with near-lossless preservation on real long documents. Reproduce with `benchmark/official_longbench_report.md`.
+
+---
+
 ## Configuration
 
 All settings are environment variables with sensible defaults. See [.env.example](.env.example) for the full list.

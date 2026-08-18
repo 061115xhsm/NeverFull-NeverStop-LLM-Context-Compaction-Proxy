@@ -307,6 +307,18 @@ curl -X POST http://localhost:8198/v1/chat/completions \
 
 ## 项目结构和文件组织
 
+### 📊 基准评测——官方 LongBench 结果
+
+基于 **THUDM/LongBench 官方数据集**(`multifieldqa_zh`,真实 6K-15K 字符长文档)验证:
+
+| 策略 | 平均压缩率 | 平均语义保真度 |
+|------|-----------|---------------|
+| baseline(纯截断) | 0.499 | **1.000** |
+| summary(粗暴摘要) | **0.982** | 0.796 |
+| **adaptive(保真约束)** | **0.710** | **0.993** |
+
+**核心结论**:`adaptive` 实现 **71% 压缩率 + 99.3% 语义保真度**——是唯一在真实长文档上兼具高压缩与近似无损保持的策略。复现见 `benchmark/official_longbench_report.md`。
+
 | 文件/目录 | 描述 | 用途 |
 |-----------|------|------|
 | `compaction-proxy.py` | 主程序 | 代理的全部核心逻辑 |
