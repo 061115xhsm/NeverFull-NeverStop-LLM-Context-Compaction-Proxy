@@ -82,20 +82,39 @@ def baseline_compress(messages: list, budget: int) -> list:
 
 
 def summary_compress(messages: list, budget: int) -> list:
-    """summary:每轮消息压缩为简短摘要。"""
+    """summary:启发式摘要——保留每条消息首尾关键句,压缩中间。"""
     out: list = []
     for m in messages:
         c = str(m.get("content", ""))
         if len(c) > 60:
-            out.append({**m, "content": c[:60] + "..."})
+            # 保留前 40 字符 + 后 20 字符,中间省略
+            head, tail = c[:40], c[-20:]
+            out.append({**m, "content": f"{head}…{tail}"})
         else:
             out.append(m)
     return out
 
 
+def llm_summary_compress(messages: list, budget: int) -> dict:
+    """summary+LLM:优先用真实 LLM 摘要,不可用则降级启发式摘要。"""
+    try:
+        from model_hub import get_summary_model
+        model = get_summary_model()
+        if "local" not in model.name or True:
+            # 尝试调用;失败会返回 None,降级启发式
+            result = model.summarize(messages, max_tokens=500)
+            if result:
+                return {"messages": [{"role": "assistant", "content": result}],
+                        "used_llm": True}
+    except Exception:
+        pass
+    return {"messages": summary_compress(messages, budget), "used_llm": False}
+
+
 def adaptive_compress(messages: list, budget: int, scorer: FidelityScorer) -> dict:
     """adaptive:调用 fidelity.AdaptiveCompactor 做保真度约束压缩。"""
-    compactor = AdaptiveCompactor(scorer=scorer, min_fidelity=0.80, max_attempts=3)
+    compactor = AdaptiveCompactor(scorer=scorer, min_fidelity=0.80, max_attempts=3,
+                                  min_content_len=80)
     return compactor.compact(messages, budget)
 
 
@@ -151,9 +170,38 @@ def run_benchmark() -> list:
     return rows
 
 
-def write_report(rows: list) -> str:
+def run_tradeoff() -> list:
+    """
+    多档位压缩率权衡评测:对每组样例用不同压缩强度(keep 70%/50%/30%)
+    跑 AdaptiveCompactor,输出 压缩率↔保留率↔保真度 权衡曲线数据。
+    """
+    scorer = FidelityScorer()
+    keep_levels = [0.7, 0.5, 0.3]
+    tradeoff: list = []
+    for sample in SAMPLES:
+        messages = sample["messages"]
+        total = sum(len(str(m.get("content", ""))) for m in messages)
+        for keep in keep_levels:
+            budget = max(100, int(total * keep))
+            compactor = AdaptiveCompactor(scorer=scorer, min_fidelity=0.60,
+                                          max_attempts=1, min_content_len=40)
+            res = compactor.compact(messages, budget)
+            m = calc_metrics(messages, res["messages"], scorer, sample["info_points"])
+            tradeoff.append({
+                "name": sample["name"],
+                "keep_ratio": keep,
+                "compression_ratio": m["compression_ratio"],
+                "retention": m["retention"],
+                "fidelity": m["fidelity"],
+            })
+    return tradeoff
+
+
+def write_report(rows: list, tradeoff: list = None) -> str:
     lines = [
         "# 压缩基准评测报告",
+        "",
+        "## 一、三策略对比",
         "",
         "| 样例 | 策略 | 压缩率 | 信息保留率 | 语义保真度 | 说明 |",
         "|------|------|--------|-----------|-----------|------|",
@@ -168,10 +216,26 @@ def write_report(rows: list) -> str:
                 f"| {r['name']} | {strat} | {m['compression_ratio']} | {m['retention']} "
                 f"| {m['fidelity']} | {note} |"
             )
+
+    if tradeoff:
+        lines += [
+            "",
+            "## 二、多档位压缩率权衡(压缩率↔保真度↔保留率)",
+            "",
+            "| 样例 | 保留比例 | 压缩率 | 信息保留率 | 语义保真度 |",
+            "|------|---------|--------|-----------|-----------|",
+        ]
+        for t in tradeoff:
+            lines.append(
+                f"| {t['name']} | {t['keep_ratio']} | {t['compression_ratio']} "
+                f"| {t['retention']} | {t['fidelity']} |"
+            )
+
     lines += [
         "",
         "> 说明:compression_ratio 越高压缩越狠;retention 越高关键信息保留越全;",
         "> fidelity 越高压缩前后语义越接近(1.0 最佳)。",
+        "> 多档位权衡表可用于选择适合场景的压缩强度(高保真 vs 高压缩率)。",
         "> 完整接入 LongBench/BFCL/SWE-bench 见 longbench_adapter.py。",
     ]
     report = "\n".join(lines) + "\n"
@@ -182,7 +246,8 @@ def write_report(rows: list) -> str:
 
 def main() -> None:
     rows = run_benchmark()
-    report = write_report(rows)
+    tradeoff = run_tradeoff()
+    report = write_report(rows, tradeoff)
     print(report)
     print(f"\n报告已写入: {REPORT_PATH}")
 

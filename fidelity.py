@@ -134,10 +134,12 @@ class AdaptiveCompactor:
         scorer: Optional[FidelityScorer] = None,
         min_fidelity: float = 0.92,
         max_attempts: int = 3,
+        min_content_len: int = 80,
     ) -> None:
         self.scorer = scorer or FidelityScorer()
         self.min_fidelity = min_fidelity
         self.max_attempts = max_attempts
+        self.min_content_len = min_content_len
 
     def _compress_with_strength(self, messages: List[dict], budget: int, strength: float) -> List[dict]:
         """
@@ -147,14 +149,17 @@ class AdaptiveCompactor:
         result: List[dict] = []
         for msg in messages:
             content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > 200:
+            if isinstance(content, str) and len(content) > self.min_content_len:
                 # 保留比例 = strength;预算紧张时进一步收缩
-                keep_len = max(50, int(len(content) * strength))
+                keep_len = max(20, int(len(content) * strength))
                 if budget is not None and len(result) > 0:
-                    keep_len = min(keep_len, max(50, budget // max(1, len(messages))))
-                new_msg = dict(msg)
-                new_msg["content"] = content[:keep_len] + ("..." if len(content) > keep_len else "")
-                result.append(new_msg)
+                    keep_len = min(keep_len, max(20, budget // max(1, len(messages))))
+                if keep_len < len(content):
+                    new_msg = dict(msg)
+                    new_msg["content"] = content[:keep_len] + ("..." if len(content) > keep_len else "")
+                    result.append(new_msg)
+                else:
+                    result.append(msg)
             else:
                 result.append(msg)
         return result
