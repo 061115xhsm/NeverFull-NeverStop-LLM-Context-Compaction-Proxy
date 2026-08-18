@@ -1,5 +1,7 @@
 # LLM Context Compaction Proxy
 
+> **永不超限,永不停歇 · Never Full, Never Stop**
+>
 > 中文使用指南 · 2026 年 8 月
 
 ## 目录

@@ -1,6 +1,8 @@
 # LLM Context Compaction Proxy
 
-A transparent, zero-config context compaction proxy for LLM APIs. Sit it between your AI agent and any LLM provider — it automatically compresses conversation context when it approaches the model's token limit, keeping your agents running indefinitely without hitting context window walls.
+> **Never Full, Never Stop** — 永不超限,永不停歇
+>
+> A transparent, zero-config context compaction proxy for LLM APIs. Sit it between your AI agent and any LLM provider — it automatically compresses conversation context when it approaches the model's token limit, keeping your agents running indefinitely without hitting context window walls.
 
 **40 compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
 
