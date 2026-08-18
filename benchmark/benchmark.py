@@ -112,9 +112,9 @@ def llm_summary_compress(messages: list, budget: int) -> dict:
 
 
 def adaptive_compress(messages: list, budget: int, scorer: FidelityScorer) -> dict:
-    """adaptive:调用 fidelity.AdaptiveCompactor 做保真度约束压缩。"""
-    compactor = AdaptiveCompactor(scorer=scorer, min_fidelity=0.80, max_attempts=3,
-                                  min_content_len=80)
+    """adaptive:调用 fidelity.AdaptiveCompactor 做保真度约束压缩(激进优先)。"""
+    compactor = AdaptiveCompactor(scorer=scorer, min_fidelity=0.90, max_attempts=4,
+                                  min_content_len=30)
     return compactor.compact(messages, budget)
 
 

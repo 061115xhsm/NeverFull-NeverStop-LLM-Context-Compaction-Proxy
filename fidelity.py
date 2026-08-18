@@ -144,22 +144,44 @@ class AdaptiveCompactor:
     def _compress_with_strength(self, messages: List[dict], budget: int, strength: float) -> List[dict]:
         """
         按强度压缩:strength 0-1,越高保留越多。
-        简化实现:对每条消息按强度截断长文本。
+
+        按字符预算贪心选句:
+        - 目标保留字符 = len(content) * strength(受全局预算约束)
+        - 首句必留(问题/主题上下文),其余按顺序贪心填充到 target
+        - 严格保证压缩结果短于原文
         """
+        import re
+
         result: List[dict] = []
         for msg in messages:
             content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > self.min_content_len:
-                # 保留比例 = strength;预算紧张时进一步收缩
-                keep_len = max(20, int(len(content) * strength))
-                if budget is not None and len(result) > 0:
-                    keep_len = min(keep_len, max(20, budget // max(1, len(messages))))
-                if keep_len < len(content):
-                    new_msg = dict(msg)
-                    new_msg["content"] = content[:keep_len] + ("..." if len(content) > keep_len else "")
-                    result.append(new_msg)
-                else:
-                    result.append(msg)
+            if not (isinstance(content, str) and len(content) > self.min_content_len):
+                result.append(msg)
+                continue
+
+            # 目标保留字符数(强度映射),并受全局预算约束
+            target = int(len(content) * strength)
+            if budget is not None and len(result) > 0:
+                target = min(target, max(20, budget // max(1, len(messages))))
+
+            sentences = [s.strip() for s in re.split(r"[。！？!?；;\n]", content) if s.strip()]
+            if not sentences:
+                new_text = content[:target] if target < len(content) else content
+                result.append({**msg, "content": new_text + ("..." if target < len(content) else "")})
+                continue
+
+            # 首句必留,其余按顺序贪心填充到 target
+            kept = [sentences[0]]
+            for s in sentences[1:]:
+                if sum(len(x) for x in kept) + len(s) > target:
+                    break
+                kept.append(s)
+            new_text = " ".join(kept)
+            if len(new_text) > target:
+                new_text = new_text[:target]
+            # 严格保证压缩后短于原文
+            if len(new_text) < len(content):
+                result.append({**msg, "content": new_text + "..."})
             else:
                 result.append(msg)
         return result
@@ -171,7 +193,10 @@ class AdaptiveCompactor:
         min_fidelity: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
-        执行自适应压缩。
+        执行自适应压缩(激进优先调度)。
+
+        强度序列从最激进(0.3)开始,保真度不足再逐级放宽
+        [0.3, 0.5, 0.7, 0.9],在守住保真度底线的前提下最大化压缩率。
 
         Returns:
             {'messages': [...], 'fidelity': float, 'attempts': int, 'met_floor': bool}
@@ -179,27 +204,32 @@ class AdaptiveCompactor:
         floor = min_fidelity if min_fidelity is not None else self.min_fidelity
         original_text = "\n".join(str(m.get("content", "")) for m in messages)
 
-        # 从宽松到严格:strength 递减,保真度不足时降低压缩强度
-        for attempt in range(1, self.max_attempts + 1):
-            strength = max(0.3, 0.9 - (attempt - 1) * 0.2)
+        # 激进优先:从最激进到最保守(先求高压缩,保真不足再放宽)
+        strength_seq = [0.3, 0.5, 0.7, 0.9][: self.max_attempts]
+        best_compacted = messages
+        best_fidelity = 1.0
+        best_attempt = 1
+
+        for attempt, strength in enumerate(strength_seq, start=1):
             compacted = self._compress_with_strength(messages, budget, strength)
             compacted_text = "\n".join(str(m.get("content", "")) for m in compacted)
             fidelity = self.scorer.score(original_text, compacted_text)
+            best_compacted, best_fidelity, best_attempt = compacted, fidelity, attempt
 
-            if fidelity >= floor or attempt == self.max_attempts:
+            if fidelity >= floor:
                 return {
                     "messages": compacted,
                     "fidelity": fidelity,
                     "attempts": attempt,
-                    "met_floor": fidelity >= floor,
+                    "met_floor": True,
                 }
 
-        # 理论不可达;兜底
+        # 全部尝试均未达标:返回最后一次(最保守)结果
         return {
-            "messages": messages,
-            "fidelity": 1.0,
-            "attempts": self.max_attempts,
-            "met_floor": True,
+            "messages": best_compacted,
+            "fidelity": best_fidelity,
+            "attempts": best_attempt,
+            "met_floor": best_fidelity >= floor,
         }
 
 
