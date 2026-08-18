@@ -1,0 +1,26 @@
+[Unit]
+Description=LLM Context Compaction Proxy
+After=network.target
+
+[Service]
+Type=simple
+# Replace <PYTHON_PATH> with your Python interpreter path
+# Replace <PROXY_PATH> with the full path to compaction-proxy.py
+ExecStart=<PYTHON_PATH> <PROXY_PATH>/compaction-proxy.py
+Restart=always
+RestartSec=3
+
+# Core configuration
+Environment=COMPACTION_PROXY_PORT=8198
+Environment=COMPACTION_PROXY_UPSTREAM=http://localhost:11434/v1
+Environment=COMPACTION_PROXY_MODEL=gpt-4o-mini
+
+# Logging
+Environment=COMPACTION_PROXY_LOG_LEVEL=INFO
+# Environment=COMPACTION_PROXY_LOG_FILE=/var/log/compaction-proxy.log
+
+# Optional: load environment from file
+# EnvironmentFile=/path/to/.env
+
+[Install]
+WantedBy=default.target
