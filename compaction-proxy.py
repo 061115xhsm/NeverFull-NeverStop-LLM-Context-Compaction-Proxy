@@ -119,11 +119,12 @@ LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
 
 UPSTREAM_BASE = os.environ.get(
     "COMPACTION_PROXY_UPSTREAM",
-    "https://maas-coding-api.cn-huabei-1.xf-yun.com/anthropic"
+    "http://localhost:11434/v1"
 )
-# V6 FIX: maas-coding-api is an Anthropic-format endpoint.
-# OpenClaw sends OpenAI-format requests, so we need to convert.
-# This constant tracks whether the upstream requires Anthropic format.
+# Default upstream is a local Ollama endpoint. Set COMPACTION_PROXY_UPSTREAM
+# to your provider (OpenAI / Anthropic / DeepSeek / iFlytek MaaS, etc.).
+# For Anthropic-format upstreams (e.g. iFlytek MaaS coding API), set
+# COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=true so requests are converted.
 UPSTREAM_IS_ANTHROPIC = os.environ.get(
     "COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC",
     "auto"  # "auto" = detect from URL, "true" = always, "false" = never
