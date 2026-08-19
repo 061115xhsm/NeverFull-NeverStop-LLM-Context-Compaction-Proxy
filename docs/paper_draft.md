@@ -151,15 +151,17 @@ adaptive 的 Q&A 准确率高于 summary（46.7% vs 43.3%）,证明保真度约�
 
 ### 4.6 压缩效率(实测)
 
-FF-Compactor 为纯 Python 句子级压缩,**无需 GPU**:
+同批官方 LongBench 长文档,实测两种方法延迟:
 
-| 指标 | 实测值 |
-|------|--------|
-| 平均压缩延迟(官方 6K-15K 字符长文档) | **42 ms**(CPU) |
-| 吞吐 | 23.5 次/秒 |
-| 显存占用 | 0(纯 CPU) |
+| 指标 | FF-Compactor(本文) | LLMLingua-7B |
+|------|-------------------|--------------|
+| 平均压缩延迟(6K-15K 字符) | **42 ms** | 1440 ms |
+| 硬件需求 | 纯 CPU,0 显存 | GPU 7-8GB(INT8) |
+| 加速比 | — | FF-Compactor 快 **34 倍** |
 
-对照:LLMLingua-7B 需 7-8GB 显存(INT8)且单条长文档延迟达秒级(逐 token 困惑度计算)。FF-Compactor 在效率与部署成本上具备数量级优势。
+FF-Compactor 为纯 Python 句子级压缩,无需 GPU,延迟 42ms(CPU);LLMLingua-7B
+需 7-8GB 显存且单条长文档延迟 1.4 秒(逐 token 困惑度计算)。FF-Compactor
+在效率与部署成本上具备数量级优势。
 
 ---
 
