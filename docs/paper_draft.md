@@ -34,6 +34,8 @@ $$\mathrm{Sim}(M, M') \ge \tau \quad \wedge \quad |M'| \le B$$
 
 **摘要压缩。** 基于抽取式或生成式摘要的压缩方法（summary 策略）实现简单、压缩率高,但存在信息丢失与幻觉风险,且无法针对具体任务动态调整,在 LongBench 上保真度显著下降（0.796）。
 
+**工程化压缩层（GitHub 新生态）。** 2025-2026 年出现一批面向 Agent 的工程化压缩项目:**Headroom**（66K+ star）采用内容感知路由器（JSON/AST/散文分治）与 Compress-Cache-Retrieve（CCR）可逆存储,以代理/库/MCP 形态压缩工具输出;**billion-context** 提供模型可调用的 compress/decompress/search_context 工具与三级摘要（T1→T2→T3）可解压压缩块;**opencode-dynamic-context-pruning** 做范围/消息两级压缩与工具调用去重;**Context Gateway** 以阈值触发后台预压缩。这些工程方案验证了"可逆压缩块 + 可检索"在生产中的价值,但多依赖经验阈值或摘要质量直觉,**缺乏以语义保真度为硬约束的量化门控**——这正是 FF-Compactor 的差异化核心。
+
 FF-Compactor 的差异在于:不依赖任务监督即可工作,通过显式保真度门控将"压缩多少"与"能否保住语义"统一到一个可调参数框架中。
 
 ---

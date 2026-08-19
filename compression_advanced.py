@@ -156,6 +156,8 @@ class ReversibleCompactor:
     def __init__(self, threshold_chars: int = 800) -> None:
         self.threshold_chars = threshold_chars
         self.store: Dict[str, str] = {}
+        # 压缩块摘要(供 search_context 检索,避免全文展开)
+        self._summaries: Dict[str, str] = {}
 
     def compact(self, messages: List[dict]) -> Dict[str, Any]:
         compacted: List[dict] = []
@@ -164,12 +166,50 @@ class ReversibleCompactor:
             if isinstance(content, str) and len(content) > self.threshold_chars:
                 ref_id = f"ref_{uuid.uuid4().hex[:10]}"
                 self.store[ref_id] = content
+                # 生成摘要(前 80 字符 + 关键数字/专名提示),供 search_context
+                self._summaries[ref_id] = self._make_summary(content)
                 new_msg = dict(msg)
                 new_msg["content"] = f"[REF:{ref_id}]"
                 compacted.append(new_msg)
             else:
                 compacted.append(msg)
         return {"compacted": compacted, "store": self.store}
+
+    @staticmethod
+    def _make_summary(content: str, limit: int = 80) -> str:
+        """生成压缩块摘要:首段截断 + 关键信息提示。"""
+        head = content[:limit].replace("\n", " ")
+        nums = len(re.findall(r"[0-9]+", content[:2000]))
+        return f"{head}...(含 {nums} 个数字/数据点)" if nums else head
+
+    def search_context(self, keyword: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        在压缩块摘要(及原文)中按关键词检索(借鉴 billion-context search_context)。
+
+        Returns:
+            [{"ref_id": str, "summary": str, "score": int(命中数), "length": int}, ...]
+        """
+        kw = keyword.lower()
+        hits: List[Dict[str, Any]] = []
+        for ref_id, summary in self._summaries.items():
+            score = summary.lower().count(kw)
+            if score > 0:
+                hits.append({
+                    "ref_id": ref_id,
+                    "summary": summary,
+                    "score": score,
+                    "length": len(self.store.get(ref_id, "")),
+                })
+        hits.sort(key=lambda h: h["score"], reverse=True)
+        return hits[:top_k]
+
+    def stats(self) -> Dict[str, Any]:
+        """压缩块统计(便于 acp_status 式诊断)。"""
+        return {
+            "blocks": len(self.store),
+            "total_original_chars": sum(len(v) for v in self.store.values()),
+            "searchable_summaries": len(self._summaries),
+        }
 
     def restore(self, ref_id: str) -> Optional[str]:
         return self.store.get(ref_id)
