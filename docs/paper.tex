@@ -195,6 +195,28 @@ $\rightarrow$ 门控校验"顺序处理,并在每轮只重算受影响的句子�
 领先(0.996 vs 0.828)},验证了"以保真度为约束而非事后评估"的设计优于纯困惑度
 剪枝。
 
+\subsection{同类句子级基线对比(近似实现)}
+
+在相同官方 LongBench 数据(multifieldqa\_zh,前 20 条)上,与句子级同类方法对比:
+
+\begin{table}[h]
+  \centering
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    预算 $B$ & Selective Context 压缩率/保真度 & RECOMP 风格 压缩率/保真度 & FF-Compactor 压缩率/保真度 \\
+    \midrule
+    30\% & 0.695 / 0.887 & 0.691 / 0.927 & \textbf{0.853} / \textbf{0.980} \\
+    50\% & 0.459 / 0.917 & 0.423 / 0.966 & \textbf{0.753} / \textbf{0.993} \\
+    70\% & 0.267 / 0.943 & 0.254 / 0.979 & \textbf{0.710} / \textbf{0.993} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{结论}:同预算下 FF-Compactor 保真度全面领先(0.980-0.993 vs 0.887-0.979)
+且压缩率更高——贪心选句与保真门控的组合优于纯打分选择(Selective Context)
+与纯抽取摘要(RECOMP 近似)。注:两基线原文分别依赖 LLM 打分与监督摘要器,
+此处为本地工程近似,见 \texttt{benchmark/}。
+
 \subsection{消融实验(实测)}
 
 为验证各模块贡献,在官方 LongBench(multifieldqa\_zh,前 15 条)上实测四组消融:
