@@ -61,16 +61,16 @@ def detect_device():
 
 
 def build_llmlingua():
-    """构造 PromptCompressor,支持 INT8 量化(环境变量 LLMLINGUA_INT8=1)。"""
+    """构造 PromptCompressor,自动检测 GPU/CPU。"""
     from llmlingua import PromptCompressor
     device = detect_device()
     kwargs = {"model_name": LLMLINGUA_MODEL, "device_map": device}
+    # INT8 量化:通过 model_config 传递(需 bitsandbytes)
     if os.environ.get("LLMLINGUA_INT8", "") == "1":
-        kwargs["use_llmlingua2"] = False  # LLMLingua1 + INT8
         try:
             from transformers import BitsAndBytesConfig
-            kwargs["load_in_8bit"] = True
-            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+            kwargs["model_config"] = {"quantization_config": BitsAndBytesConfig(load_in_8bit=True)}
+            print("[INT8] 启用 8bit 量化(bitsandbytes)")
         except ImportError:
             print("[警告] bitsandbytes 未安装,INT8 量化不可用,使用默认精度")
     return PromptCompressor(**kwargs)

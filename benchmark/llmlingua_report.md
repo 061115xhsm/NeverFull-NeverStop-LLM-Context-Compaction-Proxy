@@ -1,45 +1,28 @@
-# LLMLingua 基线报告
+# LLMLingua 压缩基线报告
 
-> 状态:LLMLingua 已安装,基线受本机环境限制无法完整运行
-> 生成日期:2026-08-19
+- **生成时间**: 2026-08-19 19:09:00
+- **llmlingua 可用**: 是
+- **状态/原因**: 正常完成
+- **数据集**: `/media/qq/文档/llm-compaction-proxy-data/longbench/data/multifieldqa_zh.jsonl`(前 5 条)
+- **压缩参数**: rate=0.5, model=/media/qq/文档/llm-compaction-proxy-data/llama2-7b-local
 
-## 安装状态
+## 总体指标
 
-- ✅ `llmlingua` 0.2.2 已安装成功
-- ✅ `PromptCompressor` 可导入
-- ✅ CPU 模式 + tiny-gpt2 可初始化(7B 模型需 GPU)
+- **平均压缩率**: 0.6891 (68.91%)
+- **平均保真度**: 0.8078
+- **原始 token 总数**: 35551
+- **压缩后 token 总数**: 10193
+- **整体压缩率**: 0.7133 (71.33%)
 
-## 环境限制
+## 逐条明细
 
-| 限制 | 说明 |
-|------|------|
-| GPU 不可用 | `CUDA unknown error`,CUDA_VISIBLE_DEVICES 置空后走 CPU |
-| 默认模型过大 | NousResearch/Llama-2-7b-hf 需下载 ~13GB 且需 GPU |
-| tiny-gpt2 受限 | 序列长度上限 1024 < 长文档(2482 token),且返回值结构与预期不符 |
+| 序号 | ID | 原始tokens | 压缩后tokens | 压缩率 | 保真度 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1 | 5b1b8e937b83c3ff9b75ac386fae9c4575c4b9f26a4fbdad | 11539 | 3002 | 0.7398 | 0.8484 |
+| 2 | 94ac1d26cf68a448f5bddf4b5400eab51717c26ab3127df0 | 7468 | 1945 | 0.7396 | 0.7743 |
+| 3 | 681a3146fff714cfdc68c4a9ca0b6663d104d73e75facee1 | 3498 | 1447 | 0.5863 | 0.8224 |
+| 4 | 25256db5d953fa971b88f06502dfecacbc5532aea7fb6d91 | 8142 | 1902 | 0.7664 | 0.6886 |
+| 5 | 1a0baf25d7431f32becd0a34034a2b88927fa168bcccf698 | 4904 | 1897 | 0.6132 | 0.9054 |
 
-## 论文级参照值(LLMLingua 公开结果)
-
-LLMLingua 论文(ICLR 2024)在 LongBench 的公开数据:
-
-| 指标 | LLMLingua 公开值 |
-|------|-----------------|
-| 压缩率 | 80%+ |
-| LongBench 任务准确率下降 | 2-4% |
-
-## 与本项目 adaptive 的对比参照(同口径最佳可用数据)
-
-| 方案 | 压缩率 | 保真度/准确率 |
-|------|--------|--------------|
-| LLMLingua(论文公开) | 80%+ | 任务准确率降 2-4% |
-| **本项目 adaptive(官方 LongBench 实测)** | **70.3%(30 子集平均)** | **保真度 0.997** |
-
-## 结论
-
-> LLMLingua 基线完整运行需要 GPU(7B 模型)。本项目 adaptive 已在官方 LongBench 30 个子集实测:平均压缩率 70.3%、平均保真度 0.997。**同口径对比 LLMLingua 需在有 GPU 的环境完成;当前数据可作参照,证明本项目在保真度控制维度具备论文级对比基础。**
-
-## 复现方法(有 GPU 时)
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python3 benchmark/llmlingua_baseline.py
-# 默认 LLMLINGUA_MODEL=NousResearch/Llama-2-7b-hf
-```
+---
+*由 benchmark/llmlingua_baseline.py 自动生成。*
