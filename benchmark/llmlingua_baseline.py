@@ -279,13 +279,28 @@ def main():
     llm_lingua = build_llmlingua()
     FidelityScorer = load_fidelity_scorer()
 
-    # 4) 逐条压缩并计算指标
+    # 4) 逐条压缩并计算指标(支持断点续跑:进度文件记录已处理样本)
     details = []
     rate_sum = 0.0
     rate_count = 0
     fidelity_values = []
+    PROGRESS_FILE = os.environ.get(
+        "LLMLINGUA_PROGRESS", "/tmp/llmlingua_progress.txt"
+    )
+    done_indices = set()
+    if os.path.exists(PROGRESS_FILE):
+        with open(PROGRESS_FILE, encoding="utf-8") as pf:
+            for line in pf:
+                line = line.strip()
+                if line.isdigit():
+                    done_indices.add(int(line))
+        if done_indices:
+            print(f"[续跑] 已检测到 {len(done_indices)} 条已处理样本,跳过: "
+                  f"{sorted(done_indices)[:5]}...")
 
     for idx, item in enumerate(samples, start=1):
+        if idx in done_indices:
+            continue  # 断点续跑:跳过已处理样本
         prompt = build_prompt(item)
         if not prompt:
             print(f"[警告] 第 {idx} 条样本为空, 跳过。")
@@ -331,6 +346,9 @@ def main():
             f"压缩率 {rate if rate is not None else 'N/A'}, "
             f"保真度 {fidelity if fidelity is not None else 'N/A'}"
         )
+        # 记录断点(仅记录成功处理的样本)
+        with open(PROGRESS_FILE, "a", encoding="utf-8") as pf:
+            pf.write(f"{idx}\n")
 
     avg_rate = (rate_sum / rate_count) if rate_count else None
     avg_fidelity = (sum(fidelity_values) / len(fidelity_values)) if fidelity_values else None

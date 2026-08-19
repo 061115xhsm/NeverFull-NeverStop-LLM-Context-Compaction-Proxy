@@ -175,7 +175,7 @@ $\rightarrow$ 门控校验"顺序处理,并在每轮只重算受影响的句子�
 
 \subsection{与 LLMLingua 论文基线实测对比}
 
-在相同官方 LongBench 数据(multifieldqa\_zh,前 15 条)上,采用 LLMLingua-7B
+在相同官方 LongBench 数据(multifieldqa\_zh,前 200 条)上,采用 LLMLingua-7B
 (INT8,rate=0.5)实测:
 
 \begin{table}[h]
@@ -184,15 +184,15 @@ $\rightarrow$ 门控校验"顺序处理,并在每轮只重算受影响的句子�
     \toprule
     策略 & 平均压缩率 & 平均保真度 \\
     \midrule
-    LLMLingua-7B(论文基线,实测) & 0.666 & 0.844 \\
+    LLMLingua-7B(论文基线,实测) & 0.689 & 0.828 \\
     \textbf{adaptive(FF-Compactor,本文)} & \textbf{0.708} & \textbf{0.996} \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-实测结论:在相近压缩率下(0.666 vs 0.708),LLMLingua 的逐 token 剪枝使保真度
-跌至 0.844,而 FF-Compactor 的句子级保真门控达到 0.996——\textbf{保真度显著
-领先(0.996 vs 0.844)},验证了"以保真度为约束而非事后评估"的设计优于纯困惑度
+实测结论:在相近压缩率下(0.689 vs 0.708),LLMLingua 的逐 token 剪枝使保真度
+跌至 0.828,而 FF-Compactor 的句子级保真门控达到 0.996——\textbf{保真度显著
+领先(0.996 vs 0.828)},验证了"以保真度为约束而非事后评估"的设计优于纯困惑度
 剪枝。
 
 \subsection{消融实验(实测)}
