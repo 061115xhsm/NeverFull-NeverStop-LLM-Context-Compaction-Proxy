@@ -1,17 +1,15 @@
 """
-LLMLingua2 风格基线(benchmark/llmlingua2_baseline.py)
-========================================================
-llmlingua2 包不在 PyPI,故用 transformers 直接加载已下载的
-xlm-roberta 模型(allenai/llmlingua-2-0.7b 风格),实现
-LLMLingua2 的核心机制——逐 token 困惑度(重要性)剪枝:
+LLMLingua-2 基线(benchmark/llmlingua2_baseline.py)
+====================================================
+LLMLingua-2(Xu et al., ACL Findings 2024)核心机制:token 分类。
+用 XLMRobertaForTokenClassification 对每个 token 输出 keep/delete
+两类 logits,按压缩率 rate 删除"删除概率最高"的 token。
 
-1. 加载模型,对输入分词
-2. 用 MLM head 计算每个 token 的重要性(被 mask 后恢复难度 ≈ 困惑度)
-3. 按压缩率保留高重要性 token,删除低重要性 token
-4. 计算压缩率 + 语义保真度(FidelityScorer)
+llmlingua2 包不在 PyPI,故用 transformers 直调官方模型:
+  microsoft/llmlingua-2-xlm-roberta-large-meetingbank
 
 用法: python3 benchmark/llmlingua2_baseline.py
-环境变量: LLMLINGUA2_MODEL(默认文档盘已下载模型), LLMLINGUA2_RATE(默认 0.5)
+环境变量: LLMLINGUA2_MODEL, LLMLINGUA2_RATE, LLMLINGUA2_SAMPLES
 """
 
 from __future__ import annotations
@@ -27,11 +25,9 @@ sys.path.insert(0, _PARENT)
 from fidelity import FidelityScorer  # noqa: E402
 
 MODEL_PATH = os.environ.get(
-    "LLMLINGUA2_MODEL",
-    "/media/qq/文档/llm-compaction-proxy-data/llmlingua2-local",
-)
+    "LLMLINGUA2_MODEL", "microsoft/llmlingua-2-xlm-roberta-large-meetingbank")
 RATE = float(os.environ.get("LLMLINGUA2_RATE", "0.5"))
-NUM_SAMPLES = int(os.environ.get("LLMLINGUA2_SAMPLES", "10"))
+NUM_SAMPLES = int(os.environ.get("LLMLINGUA2_SAMPLES", "15"))
 DATA_PATH = os.environ.get(
     "LLMLINGUA2_DATA",
     "/media/qq/文档/llm-compaction-proxy-data/longbench/data/multifieldqa_zh.jsonl",
@@ -40,73 +36,80 @@ REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llmlingua2_re
 
 
 def load_model():
-    """加载 xlm-roberta 模型 + MLM head(GPU 优先)。"""
-    from transformers import AutoModelForMaskedLM, AutoTokenizer
+    from transformers import AutoModelForTokenClassification, AutoTokenizer
     import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[设备] {device}")
     t0 = time.time()
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
-    model = AutoModelForMaskedLM.from_pretrained(MODEL_PATH).to(device)
+    model = AutoModelForTokenClassification.from_pretrained(MODEL_PATH).to(device)
     model.eval()
     print(f"[模型] 加载完成({time.time()-t0:.0f}s, {model.num_parameters()/1e6:.0f}M 参数)")
     return model, tokenizer, device
 
 
-def token_importance(model, tokenizer, device, text: str, max_len: int = 512) -> list:
+def compress_prompt(model, tokenizer, device, text: str, rate: float,
+                    max_len: int = 500) -> str:
     """
-    逐 token 重要性:对每个 token 单独 mask,用 MLM 预测,恢复难度即重要性。
-    近似困惑度(LLMLingua2 的 trained scorer)。
-    分批处理避免 OOM;返回 [(token, importance), ...]。
+    LLMLingua-2 式 token 分类压缩(分块处理,适配 514 token 上限):
+    1. 按 max_len 分块(保留句边界)
+    2. 每块:分词 → 前向 → 按 rate 删除"删除概率最高"的 token
+    3. 用偏移量重建文本,拼接各块
     """
     import torch
 
-    enc = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_len)
-    input_ids = enc["input_ids"].to(device)
-    attn = enc["attention_mask"].to(device)
-    seq_len = input_ids.shape[1]
+    # 1) 分块:按 tokenizer 分词后每 max_len 个 token 一块(粗分)
+    raw_enc = tokenizer(text, return_offsets_mapping=True, truncation=False)
+    raw_offsets = raw_enc["offset_mapping"]
+    n_tokens = len(raw_enc["input_ids"])
+    if n_tokens <= max_len:
+        chunks = [(0, n_tokens)]
+    else:
+        chunks = []
+        for start in range(0, n_tokens, max_len):
+            end = min(start + max_len, n_tokens)
+            chunks.append((start, end))
 
-    importances = []
-    batch_ids = []
-    with torch.no_grad():
-        # 对每个位置做 mask 预测(小批量 16)
+    result_parts = []
+    for start, end in chunks:
+        # 该块对应的原始字符区间
+        s_char = raw_offsets[start][0] if start < len(raw_offsets) else 0
+        e_char = raw_offsets[end - 1][1] if end - 1 < len(raw_offsets) else len(text)
+        block_text = text[s_char:e_char]
+
+        # 2) 块内 token 分类
+        enc = tokenizer(block_text, return_offsets_mapping=True, truncation=True,
+                        max_length=max_len, return_tensors="pt")
+        offsets = enc["offset_mapping"][0].tolist()
+        input_ids = enc["input_ids"].to(device)
+        attn = enc["attention_mask"].to(device)
+        with torch.no_grad():
+            out = model(input_ids=input_ids, attention_mask=attn)
+            probs = torch.softmax(out.logits[0], dim=-1)
+            delete_probs = probs[:, 1].cpu().numpy()
+
+        seq_len = len(offsets)
+        n_delete = max(0, int(seq_len * rate))
+        keep_mask = [True] * seq_len
+        candidates = []
         for i in range(seq_len):
-            batch_ids.append(i)
-            if len(batch_ids) == 16 or i == seq_len - 1:
-                masked = input_ids.clone()
-                masked[0, batch_ids] = tokenizer.mask_token_id
-                out = model(input_ids=masked, attention_mask=attn)
-                logits = out.logits[0]  # [seq, vocab]
-                for pos in batch_ids:
-                    true_id = input_ids[0, pos].item()
-                    probs = torch.softmax(logits[pos], dim=-1)
-                    p_true = probs[true_id].item()
-                    importance = -torch.log(torch.tensor(max(p_true, 1e-9))).item()
-                    importances.append((pos, importance))
-                batch_ids = []
+            tok = tokenizer.convert_ids_to_tokens(input_ids[0][i].item())
+            if offsets[i] == (0, 0) or tok in (tokenizer.cls_token,
+                                               tokenizer.sep_token,
+                                               tokenizer.pad_token):
+                continue
+            candidates.append((i, delete_probs[i]))
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        for i, _ in candidates[:n_delete]:
+            keep_mask[i] = False
 
-    # 还原顺序
-    importances.sort(key=lambda x: x[0])
-    return importances
+        # 3) 用偏移量重建块文本
+        kept = "".join(block_text[s:e] for i, (s, e) in enumerate(offsets)
+                       if keep_mask[i] and s != e)
+        result_parts.append(kept)
 
-
-def compress_prompt(model, tokenizer, device, text: str, rate: float) -> str:
-    """按 token 重要性剪枝:保留 top (1-rate) 高重要性 token。"""
-    import torch
-
-    importances = token_importance(model, tokenizer, device, text)
-    tokens = tokenizer.tokenize(text)
-    if len(tokens) <= 2:
-        return text
-
-    n_keep = max(1, int(len(tokens) * (1 - rate)))
-    # 按重要性降序取 top-k,再按原顺序重组
-    ranked = sorted(importances, key=lambda x: x[1], reverse=True)[:n_keep]
-    keep_pos = sorted(p[0] for p in ranked)
-    kept_tokens = [tokens[p] for p in keep_pos if p < len(tokens)]
-    compressed = tokenizer.convert_tokens_to_string(kept_tokens)
-    return compressed
+    return "".join(result_parts)
 
 
 def load_samples(path: str, limit: int) -> list:
@@ -128,11 +131,11 @@ def main():
     model, tokenizer, device = load_model()
     scorer = FidelityScorer()
     samples = load_samples(DATA_PATH, NUM_SAMPLES)
-    print(f"[数据] {len(samples)} 条 LongBench 样例")
+    print(f"[数据] {len(samples)} 条 LongBench 样例, rate={RATE}")
 
     rows = []
     for i, item in enumerate(samples, 1):
-        text = item.get("context", "")[:1500] + "\nQuestion: " + item.get("input", "")
+        text = item.get("context", "")[:1200] + "\nQuestion: " + item.get("input", "")
         orig_chars = len(text)
         try:
             compressed = compress_prompt(model, tokenizer, device, text, RATE)
@@ -147,16 +150,15 @@ def main():
     if rows:
         avg_r = sum(r[0] for r in rows) / len(rows)
         avg_f = sum(r[1] for r in rows) / len(rows)
-        print(f"\n✅ LLMLingua2 风格基线: 平均压缩率 {avg_r:.3f} | 平均保真度 {avg_f:.3f}")
+        print(f"\n✅ LLMLingua-2 基线: 平均压缩率 {avg_r:.3f} | 平均保真度 {avg_f:.3f}")
 
         report = (
-            f"# LLMLingua2 基线报告\n\n"
-            f"- 模型: xlm-roberta(LLMLingua2 风格,{model.num_parameters()/1e6:.0f}M 参数)\n"
+            f"# LLMLingua-2 基线报告\n\n"
+            f"- 模型: {MODEL_PATH}({model.num_parameters()/1e6:.0f}M 参数, token 分类)\n"
             f"- 数据: {DATA_PATH.split('/')[-1]} 前 {len(rows)} 条\n"
             f"- rate: {RATE}\n"
             f"- 平均压缩率: **{avg_r:.3f}**\n"
-            f"- 平均保真度: **{avg_f:.3f}**\n\n"
-            f"> 注: llmlingua2 包不在 PyPI,此为 transformers 直调 MLM 困惑度剪枝的近似实现。\n"
+            f"- 平均保真度: **{avg_f:.3f}**\n"
         )
         with open(REPORT, "w", encoding="utf-8") as f:
             f.write(report)
