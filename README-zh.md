@@ -316,9 +316,10 @@ curl -X POST http://localhost:8198/v1/chat/completions \
 | baseline(纯截断) | 0.499 | 1.000 | 340 |
 | summary(粗暴摘要) | 0.982 | 0.796 | 340 |
 | **LLMLingua-7B**(INT8,实测) | 0.689 | 0.828 | 200 |
+| **Headroom**(smart_crusher,实测) | 0.346 | 0.397 | 10 |
 | **adaptive(保真约束)** | **0.708** | **0.996** | 340 |
 
-**核心结论**:`adaptive` 实现 **70.8% 压缩率 + 99.6% 语义保真度**——压缩率与 SOTA 基线 LLMLingua-7B 相当,但**保真度领先 17 个百分点**,且**快 34 倍**(42ms CPU vs 1440ms GPU)。完整数据表(消融 / τ×B 灵敏度 / rate 权衡曲线 / 效率 / Q&A 准确率)见 **[BENCHMARK.md](BENCHMARK.md)**,全部可经 `benchmark/` 脚本复现。
+**核心结论**:`adaptive` 实现 **70.8% 压缩率 + 99.6% 语义保真度**——压缩率与 SOTA 基线 LLMLingua-7B 相当,但**保真度领先 17 个百分点**,且**快 34 倍**(42ms CPU vs 1440ms GPU)。对比工程化压缩层 **Headroom**:同批 JSON 数据实测,Headroom 压缩 34.6% / 保真 0.397(且 user 消息/代码/散文完全不压缩),adaptive 压缩 50% / 保真 0.521。完整数据表(消融 / τ×B 灵敏度 / rate 权衡曲线 / 效率 / Q&A 准确率)见 **[BENCHMARK.md](BENCHMARK.md)**,全部可经 `benchmark/` 脚本复现。
 
 | 文件/目录 | 描述 | 用途 |
 |-----------|------|------|

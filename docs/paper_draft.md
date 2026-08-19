@@ -178,6 +178,34 @@ FF-Compactor 为纯 Python 句子级压缩,无需 GPU,延迟 42ms(CPU);LLMLingua
 需 7-8GB 显存且单条长文档延迟 1.4 秒(逐 token 困惑度计算)。FF-Compactor
 在效率与部署成本上具备数量级优势。
 
+### 4.7 与工程化压缩层对比(Headroom 实测)
+
+Headroom(2026,66K+ star)是当前最具代表性的工程化压缩层(内容感知路由器 + CCR 可逆存储)。我们安装 headroom-ai 0.35.0 实测,分多轮验证其触发条件与压缩表现:
+
+**触发条件实测**(transforms 字段显示内容路由决策):
+
+| 测试 | role | 内容 | 路由决策 | 压缩率 |
+|------|------|------|---------|--------|
+| 中文问答 | user | LongBench 长文档 | `protected:user_message` | 0.000 |
+| 超长文本 | user | 400K 字符 | `protected:user_message` | 0.000 |
+| JSON | assistant | 结构化数据 | `smart_crusher:0.52` | 0.538 |
+| 代码/日志 | assistant/tool | 代码、日志 | `protected:recent_code` | 0.000 |
+| 散文 | assistant | 自然语言 | `noop` | 0.000 |
+
+**同条件压缩对比**(10 条不同规模 JSON):
+
+| 指标 | Headroom(smart_crusher) | FF-Compactor |
+|------|------------------------|--------------|
+| 平均压缩率 | 0.346 | **0.500** |
+| 平均保真度 | 0.397 | **0.521** |
+
+**实测结论**:
+- Headroom 的压缩是**角色/内容路由驱动**的:user 消息与"最近代码"默认受保护不压缩,散文走 noop 跳过,仅在 JSON + assistant role 下触发 smart_crusher;
+- 即便在其唯一触发场景(JSON),Headroom 压缩率 0.346 低于 FF-Compactor 的 0.500,且保真度 0.397 显著低于 0.521——统计式压缩(删除字段/数组项)对语义破坏较大;
+- FF-Compactor 对**任意角色、任意内容类型**统一压缩(中文长文档 0.996 保真、代码 0.636、JSON 0.521),无角色/类型保护限制。
+
+**定位**:Headroom 等工程方案面向 Agent 场景的"安全压缩"设计(保护 user 消息),而 FF-Compactor 以保真度门控为硬约束、无内容类型限制,在通用长文本压缩上具备独占优势。
+
 ---
 
 ## 5 结论与未来工作

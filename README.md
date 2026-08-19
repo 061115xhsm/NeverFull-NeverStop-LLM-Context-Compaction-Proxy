@@ -428,9 +428,10 @@ Validated on the **official THUDM/LongBench dataset** (real 6K-15K-char document
 | baseline (truncation) | 0.499 | 1.000 | 340 |
 | summary (naive) | 0.982 | 0.796 | 340 |
 | **LLMLingua-7B** (INT8, measured) | 0.689 | 0.828 | 200 |
+| **Headroom** (smart_crusher, measured) | 0.346 | 0.397 | 10 |
 | **adaptive (fidelity-gated)** | **0.708** | **0.996** | 340 |
 
-**Key takeaway**: `adaptive` delivers **70.8% compression with 99.6% semantic fidelity** — comparable compression to the LLMLingua-7B SOTA baseline but **+17pp higher fidelity**, and **34× faster** (42ms CPU vs 1440ms GPU). Full data tables with ablation, τ×B sensitivity, rate trade-off curves, efficiency and Q&A accuracy: see **[BENCHMARK.md](BENCHMARK.md)**. Reproduce with `benchmark/` scripts.
+**Key takeaway**: `adaptive` delivers **70.8% compression with 99.6% semantic fidelity** — comparable compression to the LLMLingua-7B SOTA baseline but **+17pp higher fidelity**, and **34× faster** (42ms CPU vs 1440ms GPU). vs. engineering-layer **Headroom**: measured on the same JSON data, Headroom compresses 34.6% at 0.397 fidelity (and skips user/code/prose content entirely), while `adaptive` compresses 50% at 0.521 fidelity. Full data tables: see **[BENCHMARK.md](BENCHMARK.md)**. Reproduce with `benchmark/` scripts.
 
 ---
 

@@ -15,9 +15,24 @@
 | summary(粗暴摘要) | 0.982 | 0.796 | 340 |
 | **LLMLingua-7B**(INT8,rate=0.5) | 0.689 | 0.828 | 200 |
 | **LLMLingua-2**(token 分类,rate=0.5) | 0.687 | 0.851 | 10 |
+| **Headroom**(smart_crusher,JSON) | 0.346 | 0.397 | 10 |
 | **FF-Compactor(本文)** | **0.708** | **0.996** | 340 |
 
-**结论**:压缩率相当(0.708 vs 0.689/0.687),保真度显著领先(0.996 vs 0.828/0.851,+14~17 个百分点)。注:LLMLingua-2 样本量较小(10 条),供参照。
+**结论**:压缩率相当(0.708 vs 0.689/0.687),保真度显著领先(0.996 vs 0.828/0.851,+14~17 个百分点)。注:LLMLingua-2/Headroom 样本量较小(10 条),供参照。
+
+### Headroom 触发条件实测(详细)
+
+Headroom(66K+ star,工程化压缩层)默认保护 user 消息与"最近代码",仅对 JSON+assistant 触发 smart_crusher:
+
+| 测试 | role | 内容 | 路由决策 | 压缩率 |
+|------|------|------|---------|--------|
+| 中文问答 | user | LongBench 长文档 | protected:user_message | 0.000 |
+| 超长文本 | user | 400K 字符 | protected:user_message | 0.000 |
+| JSON | assistant | 结构化数据 | smart_crusher:0.52 | 0.538 |
+| 代码/日志 | assistant/tool | 代码、日志 | protected:recent_code | 0.000 |
+| 散文 | assistant | 自然语言 | noop | 0.000 |
+
+10 条 JSON 同条件对比:Headroom 平均 0.346/0.397,FF-Compactor 0.500/0.521(压缩率更高且保真度领先 0.124)。
 
 ## 二、全量 LongBench(30 子集 × 前 10 条 = 340 样本)
 
