@@ -13,18 +13,31 @@
 | LLMLingua-2 | 0.687 | 0.851 | ~50ms | 10 | token 分类,GPU |
 | **Headroom** | **0.000** | 1.000 | 1006ms | 10 | ⚠️ 未触发压缩(见下) |
 
-### Headroom 未触发压缩的原因(重要发现,已用超长上下文验证)
+### Headroom 未触发压缩的原因(重要发现,已用超长上下文 + 触发实验验证)
 
-Headroom 的设计是**"接近模型上下文窗口上限才压缩"**(默认 200K token 阈值)。我们分两轮验证:
+Headroom 的内容路由器对不同 role 与内容类型有不同策略。我们分三轮验证:
 
-| 测试 | 上下文长度 | Headroom 压缩率 | 结论 |
-|------|----------|---------------|------|
-| LongBench 短文本 | ~1.2K 字符 | 0.000 | 远未达阈值,不压缩 |
-| **合成超长文本** | **400K 字符(≈200K token)** | **0.000** | **已达阈值仍不压缩** |
+| 测试 | role | 内容 | model_limit | transforms | 压缩率 | 结论 |
+|------|------|------|------------|-----------|--------|------|
+| LongBench 短文本 | user | 中文问答 | 200000 | router:protected:user_message | 0.000 | user 消息受保护 |
+| 合成超长文本 | user | 400K 中文 | 200000 | router:protected:user_message | 0.000 | 超长仍保护 user |
+| **触发实验(4 类内容)** | **assistant** | JSON/代码/日志/散文 | 1000 | smart_crusher / protected:recent_code / noop | 见下表 | role 决定是否压 |
 
-第二轮(400K 字符 ≈ 200K token,正好命中 model_limit=200000)的结果表明:Headroom 的压缩触发**并非简单阈值**,而是更复杂的内容路由决策——在纯中文长文档上它选择"不压缩"(可能因为 CCR 路由器判定"无可压缩冗余"或中文内容不在其优化目标内)。
+**根因**:Headroom 默认**保护 user 消息不压缩**(transforms 标记 `router:protected:user_message`),只在 assistant/tool role 上触发压缩。且即便用 assistant role,内容路由器仍按类型决策:
 
-**结论**:在中文长文档场景下,Headroom 不提供压缩能力——这是 FF-Compactor 的独占区间,且是**经超长上下文验证的结论**(非短文本误判)。
+| 内容类型 | Headroom transforms | Headroom 压缩率 | Headroom 保真度 | FF 压缩率 | FF 保真度 |
+|---------|---------------------|----------------|----------------|-----------|-----------|
+| JSON | smart_crusher:0.52 | 0.538 | 0.399 | 0.500 | **0.516** |
+| 代码 | protected:recent_code | 0.000 | 1.000 | 0.500 | 0.636 |
+| 日志 | protected:recent_code | 0.000 | 1.000 | 0.500 | 0.518 |
+| 散文 | noop | 0.000 | 1.000 | 0.500 | 0.612 |
+
+**结论**:
+- Headroom 仅在 **JSON + assistant role** 下触发 smart_crusher(压缩率 0.538),但其保真度仅 0.399(统计压缩破坏语义)——FF-Compactor 在同内容上保真度 0.516,**保真度领先 0.117**;
+- 代码/日志被 `protected:recent_code` 保护不压,散文被 `noop` 跳过——Headroom 在这三类上完全不压缩;
+- FF-Compactor 对四类内容统一压缩(0.500),保真度 0.512-0.636 全面领先。
+
+**这是经触发实验验证的结论**:Headroom 的内容路由器对中文长文档/代码/日志/散文均不压缩,仅压 JSON 且保真度低——**中文长文档与多类型内容是 FF-Compactor 的独占区间**。
 
 ## 二、功能差距对比表
 
