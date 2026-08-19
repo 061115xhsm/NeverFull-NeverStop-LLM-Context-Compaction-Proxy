@@ -40,7 +40,40 @@ if PROJECT_ROOT not in sys.path:
 # 可配置项(可通过环境变量覆盖)
 LLMLINGUA_MODEL = os.environ.get("LLMLINGUA_MODEL", "NousResearch/Llama-2-7b-hf")
 COMPRESS_RATE = float(os.environ.get("LLMLINGUA_RATE", "0.5"))
-NUM_SAMPLES = 10
+NUM_SAMPLES = int(os.environ.get("LLMLINGUA_SAMPLES", "10"))
+# 文档盘数据路径(默认指向已迁移的官方 LongBench 数据)
+DEFAULT_DATA = "/media/qq/文档/llm-compaction-proxy-data/longbench/data/multifieldqa_zh.jsonl"
+DATA_PATH = os.environ.get("LLMLINGUA_DATA", DEFAULT_DATA)
+
+
+def detect_device():
+    """自动检测设备:有可用 CUDA 用 GPU,否则 CPU。"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            print(f"[GPU] 检测到: {name}")
+            return "cuda"
+    except Exception:
+        pass
+    print("[CPU] 未检测到可用 GPU,使用 CPU(7B 模型可能较慢)")
+    return "cpu"
+
+
+def build_llmlingua():
+    """构造 PromptCompressor,支持 INT8 量化(环境变量 LLMLINGUA_INT8=1)。"""
+    from llmlingua import PromptCompressor
+    device = detect_device()
+    kwargs = {"model_name": LLMLINGUA_MODEL, "device_map": device}
+    if os.environ.get("LLMLINGUA_INT8", "") == "1":
+        kwargs["use_llmlingua2"] = False  # LLMLingua1 + INT8
+        try:
+            from transformers import BitsAndBytesConfig
+            kwargs["load_in_8bit"] = True
+            kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+        except ImportError:
+            print("[警告] bitsandbytes 未安装,INT8 量化不可用,使用默认精度")
+    return PromptCompressor(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -229,11 +262,11 @@ def main():
         return
 
     # 2) 加载数据
-    samples = load_samples(DATA_FILE)
+    samples = load_samples(DATA_PATH)
     if not samples:
         write_report(
             available=True,
-            reason=f"数据文件为空或不存在: {DATA_FILE}",
+            reason=f"数据文件为空或不存在: {DATA_PATH}",
             avg_rate=None,
             avg_fidelity=None,
             details=[],
@@ -241,9 +274,9 @@ def main():
         print("已生成报告(无数据):", REPORT_FILE)
         return
 
-    # 3) 初始化 LLMLingua 与 FidelityScorer
+    # 3) 初始化 LLMLingua 与 FidelityScorer(GPU 自动检测 + 可选 INT8)
     print(f"[信息] 初始化 LLMLingua (model={LLMLINGUA_MODEL}, rate={COMPRESS_RATE}) ...")
-    llm_lingua = PromptCompressor(model_name=LLMLINGUA_MODEL)
+    llm_lingua = build_llmlingua()
     FidelityScorer = load_fidelity_scorer()
 
     # 4) 逐条压缩并计算指标
