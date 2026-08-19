@@ -421,15 +421,16 @@ Set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=auto` (default) for automatic detect
 
 ## 📊 Benchmark — Official LongBench Results
 
-Validated on the **official THUDM/LongBench dataset** (`multifieldqa_zh`, real 6K-15K-char documents):
+Validated on the **official THUDM/LongBench dataset** (real 6K-15K-char documents, 30 subsets / 340 samples) with real embedding fidelity scoring:
 
-| Strategy | Avg Compression | Avg Semantic Fidelity |
-|----------|-----------------|----------------------|
-| baseline (truncation) | 0.499 | **1.000** |
-| summary (naive) | **0.982** | 0.796 |
-| **adaptive (fidelity-gated)** | **0.710** | **0.993** |
+| Strategy | Avg Compression | Avg Fidelity | Samples |
+|----------|-----------------|--------------|---------|
+| baseline (truncation) | 0.499 | 1.000 | 340 |
+| summary (naive) | 0.982 | 0.796 | 340 |
+| **LLMLingua-7B** (INT8, measured) | 0.689 | 0.828 | 200 |
+| **adaptive (fidelity-gated)** | **0.708** | **0.996** | 340 |
 
-**Key takeaway**: `adaptive` delivers **71% compression with 99.3% semantic fidelity** — the only strategy that combines high compression with near-lossless preservation on real long documents. Reproduce with `benchmark/official_longbench_report.md`.
+**Key takeaway**: `adaptive` delivers **70.8% compression with 99.6% semantic fidelity** — comparable compression to the LLMLingua-7B SOTA baseline but **+17pp higher fidelity**, and **34× faster** (42ms CPU vs 1440ms GPU). Full data tables with ablation, τ×B sensitivity, rate trade-off curves, efficiency and Q&A accuracy: see **[BENCHMARK.md](BENCHMARK.md)**. Reproduce with `benchmark/` scripts.
 
 ---
 
