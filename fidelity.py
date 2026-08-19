@@ -160,9 +160,11 @@ class AdaptiveCompactor:
                 continue
 
             # 目标保留字符数(强度映射),并受全局预算约束
+            # (预算对全部消息生效,含第一条长上下文)
             target = int(len(content) * strength)
-            if budget is not None and len(result) > 0:
-                target = min(target, max(20, budget // max(1, len(messages))))
+            if budget is not None:
+                per_msg_budget = max(20, budget // max(1, len(messages)))
+                target = min(target, per_msg_budget)
 
             sentences = [s.strip() for s in re.split(r"[。！？!?；;\n]", content) if s.strip()]
             if not sentences:
