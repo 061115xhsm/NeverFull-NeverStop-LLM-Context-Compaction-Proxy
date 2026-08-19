@@ -1,6 +1,6 @@
 # Adaptive 压缩消融实验报告
 
-- 生成时间：2026-08-19 02:44:16
+- 生成时间：2026-08-20 00:05:49
 - 数据集：`/media/qq/文档/llm-compaction-proxy-data/longbench/data/multifieldqa_zh.jsonl`（前 15 条）
 - 压缩力度：`strength = 0.3`（目标保留约 30% 文本）
 - 指标定义：

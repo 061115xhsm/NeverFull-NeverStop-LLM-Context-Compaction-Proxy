@@ -139,6 +139,7 @@ def evaluate_accuracy(items: list) -> dict:
                                   max_attempts=4, min_content_len=30)
 
     stats = {"baseline": [0, 0], "summary": [0, 0], "adaptive": [0, 0], "raw": [0, 0]}
+    em_f1_stats = {}
     # [答对, 总数]
 
     for item in items:
@@ -174,33 +175,72 @@ def evaluate_accuracy(items: list) -> dict:
         if answer_is_correct(a_text, reference):
             stats["adaptive"][0] += 1
 
-    return {k: (v[0], v[1], v[0] / v[1] if v[1] else 0.0) for k, v in stats.items()}
+        # 5) 官方 LongBench EM/F1 口径(对每策略压缩文本提取答案后评分)
+        for strat, text in [("raw", raw_text), ("baseline", b_text),
+                            ("summary", s_text), ("adaptive", a_text)]:
+            if strat not in em_f1_stats:
+                em_f1_stats[strat] = {"em": [0, 0], "f1": [0.0, 0]}
+            pred_ans = extract_answer(text, query)
+            res = official_em_f1(pred_ans, reference)
+            em_f1_stats[strat]["em"][1] += 1
+            if res["em"]:
+                em_f1_stats[strat]["em"][0] += 1
+            em_f1_stats[strat]["f1"][0] += res["f1"]
+            em_f1_stats[strat]["f1"][1] += 1
+
+    return {"keyword": stats, "em_f1": em_f1_stats}
 
 
 def write_report(stats: dict, n_items: int) -> str:
+    kw = stats["keyword"]
+    ef = stats["em_f1"]
     lines = [
         "# 压缩后 Q&A 任务准确率报告",
         "",
         f"> 评测样例数:{n_items} 条(LongBench 6 大类)",
-        "> 口径:压缩后从上下文中提取答案,与参考答案比对(关键词命中 ≥50% 判对)",
+        "> 口径一:关键词命中(压缩后上下文保留参考答案关键词 ≥50% 判对)",
+        "> 口径二:官方 LongBench EM/F1(提取答案后与参考答案精确匹配/F1)",
+        "",
+        "## 一、关键词命中口径",
         "",
         "| 策略 | 答对 | 总数 | 准确率 | 相对原始下降 |",
         "|------|------|------|--------|-------------|",
     ]
-    raw_acc = stats["raw"][2]
+    raw_acc = kw["raw"][0] / kw["raw"][1] if kw["raw"][1] else 0.0
     for name, cn in [
         ("原始上下文(基线)", "raw"),
         ("baseline(截断)", "baseline"),
         ("summary(摘要)", "summary"),
         ("adaptive(保真约束)", "adaptive"),
     ]:
-        hit, total, acc = stats[cn]
+        hit, total = kw[cn][0], kw[cn][1]
+        acc = hit / total if total else 0.0
         drop = raw_acc - acc
         lines.append(f"| {name} | {hit} | {total} | {acc:.1%} | {drop:+.1%} |")
+
     lines += [
         "",
-        "> 解读:准确率下降越小,压缩对任务的影响越小。",
-        "> adaptive 应接近原始基线,而截断/摘要可能显著下降。",
+        "## 二、官方 LongBench EM/F1 口径",
+        "",
+        "| 策略 | EM 答对 | EM 总数 | EM 准确率 | 平均 F1 |",
+        "|------|---------|---------|-----------|---------|",
+    ]
+    for name, cn in [
+        ("原始上下文(基线)", "raw"),
+        ("baseline(截断)", "baseline"),
+        ("summary(摘要)", "summary"),
+        ("adaptive(保真约束)", "adaptive"),
+    ]:
+        e_hit, e_total = ef[cn]["em"][0], ef[cn]["em"][1]
+        f1_sum, f1_total = ef[cn]["f1"][0], ef[cn]["f1"][1]
+        em_acc = e_hit / e_total if e_total else 0.0
+        avg_f1 = f1_sum / f1_total if f1_total else 0.0
+        lines.append(f"| {name} | {e_hit} | {e_total} | {em_acc:.1%} | {avg_f1:.3f} |")
+
+    lines += [
+        "",
+        "> 解读:EM 准确率越低,压缩后越难从上下文直接复现标准答案;",
+        "> 平均 F1 反映压缩后提取答案与参考答案的词汇重叠度。",
     ]
     report = "\n".join(lines) + "\n"
     with open(REPORT, "w", encoding="utf-8") as f:

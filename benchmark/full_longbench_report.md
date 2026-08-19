@@ -1,7 +1,7 @@
 # Full LongBench 压缩基准报告
 
-- 生成时间: 2026-08-19 02:37:03
-- 耗时: 108.9 秒
+- 生成时间: 2026-08-20 00:04:10
+- 耗时: 21.5 秒
 - 压缩器: `fidelity.AdaptiveCompactor(min_fidelity=0.9, max_attempts=4, min_content_len=30)`
 - 数据目录: `/media/qq/文档/llm-compaction-proxy-data/longbench/data`
 - 每个子集取前 10 条(控制耗时)
