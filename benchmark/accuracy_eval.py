@@ -91,6 +91,41 @@ def answer_is_correct(predicted: str, reference: str) -> bool:
     return hits / len(key_tokens) >= 0.5
 
 
+# ── 官方 LongBench 打分口径(EM / F1) ────────────────────────────────
+
+def _normalize(s: str) -> str:
+    """LongBench 官方归一化:小写、去标点、去冠词、压缩空白。"""
+    import string
+    s = s.lower()
+    s = re.sub(r"\b(a|an|the)\b", " ", s)
+    s = "".join(ch for ch in s if ch not in string.punctuation)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def _token_f1(pred: str, ref: str) -> float:
+    pred_tokens = _normalize(pred).split()
+    ref_tokens = _normalize(ref).split()
+    if not pred_tokens or not ref_tokens:
+        return 0.0
+    common = set(pred_tokens) & set(ref_tokens)
+    if not common:
+        return 0.0
+    prec = len(common) / len(pred_tokens)
+    rec = len(common) / len(ref_tokens)
+    return 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
+
+
+def official_em_f1(predicted: str, reference: str) -> dict:
+    """返回官方口径 {'em': bool, 'f1': float}。"""
+    norm_pred = _normalize(predicted)
+    norm_ref = _normalize(reference)
+    return {
+        "em": norm_pred == norm_ref,
+        "f1": _token_f1(predicted, reference),
+    }
+
+
 def to_messages(item: dict) -> list:
     return [
         {"role": "user", "content": item["input"]},
