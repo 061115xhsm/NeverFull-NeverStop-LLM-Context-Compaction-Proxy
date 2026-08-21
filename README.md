@@ -17,7 +17,7 @@
 
 **Built for long-context agents:** OpenClaw · Claude Code · Hermes · DeepSeek Harness — all verified integrations included.
 
-**40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).**
+**40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
 
 ---
 
