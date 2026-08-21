@@ -3,17 +3,21 @@
 > 日期:2026-08-22
 > 部署版:`~/.local/bin/openclaw-compaction-proxy.py`(V10)
 > 前置:部署版已从 V6 升级至 V10(见 `deployment-upgrade-v10.md`)
+> ⚠️ 2026-08-22:讯飞上游故障,全部压缩链路已切换至商汤 `sensenova-6.8-flash-lite`
 
-## 架构总览
+## 架构总览(当前:全部商汤)
 
 ```
 工具           → 压缩实例(端口)   → 上游后端(模型不变)
 ─────────────────────────────────────────────────────
-openclaw      → 8198              → maas-coding-api.cn-huabei-1.xf-yun.com/anthropic(讯飞)
+openclaw      → 8198              → token.sensenova.cn(商汤)
 claude code   → 8197(vision) → 8199 → token.sensenova.cn(商汤)
-hermes        → 8198              → maas-coding-api.cn-huabei-1.xf-yun.com/anthropic(讯飞)
+hermes        → 8198              → token.sensenova.cn(商汤)
 atomcode      → 8200              → token.sensenova.cn/v1(商汤)
 ```
+
+**当前所有压缩实例:上游 = 商汤,压缩模型 = `sensenova-6.8-flash-lite`**
+(讯飞 maas-coding-api 故障后统一切换,原上游见文末"历史上游"表)
 
 ## 各工具接入方式
 
@@ -79,3 +83,17 @@ systemctl --user restart hermes-gateway.service
 # atomcode:恢复 config.toml base_url
 # 将 [provider_accounts."商汤"].base_url 改回 https://token.sensenova.cn/v1
 ```
+
+## 历史上游(讯飞故障前)
+
+| 实例 | 端口 | 原上游(讯飞) | 现上游(商汤) |
+|------|------|-------------|-------------|
+| openclaw | 8198 | maas-coding-api.cn-huabei-1.xf-yun.com/anthropic | token.sensenova.cn |
+| hermes(同 8198) | 8198 | 同上 | 同上 |
+| claude code | 8199 | —(创建即商汤) | token.sensenova.cn |
+| atomcode | 8200 | —(创建即商汤) | token.sensenova.cn/v1 |
+
+**2026-08-22 讯飞切换变更**:
+- `openclaw-compaction-proxy.service`:新增 `COMPACTION_PROXY_UPSTREAM=https://token.sensenova.cn`、`COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=1`、`COMPACTION_PROXY_MODEL=sensenova-6.8-flash-lite`(注意 Environment 必须放在 `[Service]` 段内,放在 `[Install]` 之后会被忽略)
+- `compaction-proxy-claude.service` / `compaction-proxy-atomcode.service`:补充 `COMPACTION_PROXY_MODEL=sensenova-6.8-flash-lite`
+- `openclaw.json` 的 `v6-compaction-provider`:model `xsparkx2agent` → `sensenova-6.8-flash-lite`,apiKey 切换为商汤 key
