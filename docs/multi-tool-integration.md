@@ -97,3 +97,21 @@ systemctl --user restart hermes-gateway.service
 - `openclaw-compaction-proxy.service`:新增 `COMPACTION_PROXY_UPSTREAM=https://token.sensenova.cn`、`COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=1`、`COMPACTION_PROXY_MODEL=sensenova-6.8-flash-lite`(注意 Environment 必须放在 `[Service]` 段内,放在 `[Install]` 之后会被忽略)
 - `compaction-proxy-claude.service` / `compaction-proxy-atomcode.service`:补充 `COMPACTION_PROXY_MODEL=sensenova-6.8-flash-lite`
 - `openclaw.json` 的 `v6-compaction-provider`:model `xsparkx2agent` → `sensenova-6.8-flash-lite`,apiKey 切换为商汤 key
+
+## Claude Code 思考(thinking)配置记录(2026-08-28)
+
+**结论**:taotoken 网关的 `glm_for_coding`(Coding Plan 套餐别名,底层 GLM-5.2)**支持思考**,但 taotoken 的 Anthropic 端点**只在请求显式携带 `thinking: {type: "enabled"}` 参数时**返回思考内容(且思考内联在 text 而非独立 thinking 块);claude code 默认只发 `effort` 参数,不触发。hermes 能思考是因为它走 OpenAI 格式(chat_completions)调用。
+
+**修复方案(已实施)**:在压缩代理 8199(claude code 链路)转发 Anthropic 请求前注入 `thinking: {type: "enabled"}`:
+
+```python
+# openclaw-compaction-proxy.py Anthropic 转发处(上游 URL 构造前)
+if os.environ.get("COMPACTION_PROXY_INJECT_THINKING") == "1":
+    if "thinking" not in body:
+        body["thinking"] = {"type": "enabled"}
+```
+
+- 开关:8199 服务 `Environment=COMPACTION_PROXY_INJECT_THINKING=1`(仅 claude code 链路启用)
+- 验证:经 8199 请求 `glm_for_coding`,响应 text 含完整思考过程("思考过程:1. ... 3-1=2 ...")
+- **⚠️ 踩坑**:`compaction-proxy-claude.service.d/override.conf`(8月27日创建)里的 `COMPACTION_PROXY_UPSTREAM` 带 `/v1` 后缀,与脚本 `rstrip("/") + "/v1/messages"` 拼接后产生 `/api/v1/v1/messages` 重复路径导致 401——已修正为 `https://taotoken.net/api`(不带 /v1)
+- 付费提醒:GLM-5.2/5.1 走普通计费,`glm_for_coding` 走 Coding Plan 套餐;思考配置用套餐别名即可,无需切付费模型
