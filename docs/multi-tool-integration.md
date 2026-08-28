@@ -169,3 +169,5 @@ atomcode    → 8200 → 商汤/glm_for_coding
 - 保留默认参数:threshold 0.5 / target_ratio 0.2 / protect_last_n 20 / protect_first_n 3
 
 **验证**:YAML 有效,`compression.enabled: True` 已加载;hermes-gateway 重启 active 无配置错误;运行时压缩在上下文溢出阈值(0.5)时触发。
+
+**⚠️ 补充(重要发现)**:`~/.hermes` 是 `/media/qq/文档/dot_hermes` 的**软链接**(inode/md5 完全相同)——hermes 实际配置目录是 `dot_hermes`(进程 cwd = `/media/qq/文档/dot_hermes`,`HERMES_HOME` 环境变量指向它)。修改 `~/.hermes/config.yaml` 即等同于修改 `dot_hermes/config.yaml`,两者是同一文件,无需重复修改。此前误以为存在两份配置,实为软链接指向同一文件。
