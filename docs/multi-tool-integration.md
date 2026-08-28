@@ -158,3 +158,14 @@ claude code → 8197 → 8199 → taotoken/glm_for_coding
 hermes      → 8201 → taotoken/glm_for_coding
 atomcode    → 8200 → 商汤/glm_for_coding
 ```
+
+## Hermes 原生压缩备用方案启用(2026-08-29)
+
+**背景**:hermes 此前持续报 `auto-compaction is disabled (compression.enabled: false)`——V10 压缩代理已在链路(8201),但 hermes 自身原生压缩开关未开。现将 hermes 原生压缩作为**备用方案**启用(V10 为主,hermes 原生兜底)。
+
+**变更**(config.yaml):
+- `compression.enabled: false` → `true`
+- `auxiliary.compression`:provider `auto` → `custom`,model → `glm_for_coding`,base_url → `https://taotoken.net/api/v1`,api_key → taotoken key
+- 保留默认参数:threshold 0.5 / target_ratio 0.2 / protect_last_n 20 / protect_first_n 3
+
+**验证**:YAML 有效,`compression.enabled: True` 已加载;hermes-gateway 重启 active 无配置错误;运行时压缩在上下文溢出阈值(0.5)时触发。
