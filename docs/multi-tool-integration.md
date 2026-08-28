@@ -115,3 +115,23 @@ if os.environ.get("COMPACTION_PROXY_INJECT_THINKING") == "1":
 - 验证:经 8199 请求 `glm_for_coding`,响应 text 含完整思考过程("思考过程:1. ... 3-1=2 ...")
 - **⚠️ 踩坑**:`compaction-proxy-claude.service.d/override.conf`(8月27日创建)里的 `COMPACTION_PROXY_UPSTREAM` 带 `/v1` 后缀,与脚本 `rstrip("/") + "/v1/messages"` 拼接后产生 `/api/v1/v1/messages` 重复路径导致 401——已修正为 `https://taotoken.net/api`(不带 /v1)
 - 付费提醒:GLM-5.2/5.1 走普通计费,`glm_for_coding` 走 Coding Plan 套餐;思考配置用套餐别名即可,无需切付费模型
+
+## Hermes V10 接入修复记录(2026-08-29)
+
+**问题**:hermes 持续报 `Context overflow and auto-compaction is disabled (compression.enabled: false)`,且 V10 压缩代理从未被 hermes 调用。
+
+**根因**(两处):
+1. hermes 主链路用的是 config.yaml 的 `xunfei` provider(OpenAI chat_completions 格式,直连讯飞 maas-coding-api),此前误改了 auth.json 的 `xunfei-anthropic`(Anthropic 格式)——**改错对象,hermes 请求从未经过 V10**(8198 实测 1 小时 0 请求);
+2. hermes 报的 `compression.enabled: false` 是 **hermes 自身原生压缩开关**(config.yaml 325 行),与 V10 压缩代理是两套独立机制。
+
+**修复**:
+- 新建 `compaction-proxy-hermes.service`(**端口 8201**,上游=`https://maas-coding-api.cn-huabei-1.xf-yun.com/v2`,OpenAI 格式,与 hermes 原链路一致)
+- hermes `xunfei` provider base_url → `http://127.0.0.1:8201`
+- 备份 `config.yaml.bak-pre-v10`,重启 hermes-gateway
+
+**修复后链路**:
+```
+hermes → 8201(V10 压缩代理)→ 讯飞 maas-coding-api(v2)
+```
+
+**备注**:8201 直连测试 401 是测试 key 无效(讯飞需 HMAC 签名),hermes 真实请求自带 key,链路已通;`compression.enabled: false` 建议保持(避免与 V10 双压缩),上下文溢出由 V10 统一处理。
