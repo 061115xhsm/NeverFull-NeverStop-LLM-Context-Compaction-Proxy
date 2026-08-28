@@ -135,3 +135,26 @@ hermes → 8201(V10 压缩代理)→ 讯飞 maas-coding-api(v2)
 ```
 
 **备注**:8201 直连测试 401 是测试 key 无效(讯飞需 HMAC 签名),hermes 真实请求自带 key,链路已通;`compression.enabled: false` 建议保持(避免与 V10 双压缩),上下文溢出由 V10 统一处理。
+
+## 全局禁用讯飞 API,统一 glm_for_coding(2026-08-29)
+
+**要求**:任何地方不再使用讯飞(xf-yun)API,全部改走 taotoken 网关的 `glm_for_coding`(Coding Plan 套餐,免费)。
+
+**变更清单**(讯飞引用 10 处清零):
+
+| 位置 | 修改 |
+|------|------|
+| hermes config.yaml | `xunfei-anthropic`/`funing`/`funing-anthropic` base_url → taotoken.net/api(v1);`auxiliary.vision` → taotoken + glm_for_coding;主模型 default → glm_for_coding |
+| hermes auth.json | `funing`/`funing-anthropic` provider 与 credential_pool base_url → taotoken.net |
+| openclaw.json | `xunfei-general`/`cherry-*`/`xunfei-anthropic` baseUrl → taotoken.net + apiKey 换 taotoken key |
+| 8201 压缩实例 | 上游 `maas-coding-api/v2` → `https://taotoken.net/api/v1`,模型 `xopqwen35397b` → `glm_for_coding` |
+
+**验证**:全局 `grep -c "xf-yun"` 全部为 0;JSON/YAML 全部有效;7 个服务 active;4 个压缩实例 health 正常。
+
+**最终链路**(全部 taotoken/glm_for_coding):
+```
+openclaw    → 8198 → 商汤(sensenova)/glm_for_coding
+claude code → 8197 → 8199 → taotoken/glm_for_coding
+hermes      → 8201 → taotoken/glm_for_coding
+atomcode    → 8200 → 商汤/glm_for_coding
+```
