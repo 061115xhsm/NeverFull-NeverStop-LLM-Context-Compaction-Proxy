@@ -11,6 +11,20 @@ The proxy is designed as a **single process**:
 
 Consequences: a second instance would have its own caches and could re-compact history the first instance already folded, and `/fold/{ref}` refs created by one instance would 404 on another unless they share `COMPACTION_PROXY_FOLD_DB`.
 
+
+## Implemented in V11 (2026-10)
+
+| Piece | How |
+|---|---|
+| Tenant scoping | `X-Tenant-Id` header (or `?tenant=`) is normalized and scopes session ids (`acme:s1`), fold access (`/fold/{ref}` returns 404 across tenants), rate-limit buckets and cost events |
+| Instance identity | `COMPACTION_PROXY_INSTANCE_ID` (default hostname); `X-Instance-Id` on every response; `/health.storage` reports it |
+| Shared compaction cache | `COMPACTION_PROXY_REDIS_URL` → Redis `SETEX`; otherwise process-local; keys include tenant + history hash |
+| Maintenance owner | `COMPACTION_PROXY_MAINTENANCE_OWNER=0` disables the periodic prune on secondary instances |
+| Storage adapters | `storage_backend.py` (moved out of `attic/`) ships SQLite/Postgres/Redis backends; Postgres/Redis paths need `psycopg2`/`redis` installed and are not yet wired into `SessionStore` |
+| Session stickiness | Response echoes `X-Session-Id`; configure your load balancer to hash on it |
+
+Still required for true multi-host operation: wire `SessionStore` (including FTS transcripts) to PostgreSQL, share the encryption key, and move compaction cache/metrics to the shared services above.
+
 ## Minimum viable multi-instance
 
 1. **Sticky routing by `X-Session-Id`.** One session must always hit the same instance; this is the cheapest correct option and requires no storage changes. Put it in your load balancer.

@@ -93,6 +93,7 @@ V4 基于 2025-2026 前沿论文研究升级，新增 10 项技术:
 import ast
 import asyncio
 import contextvars
+import socket
 import hashlib
 import json
 import logging
@@ -222,6 +223,23 @@ try:
 except Exception:
     CostTracker = None
     ENH_COST = False
+
+try:
+    from tenant import TENANT, SESSION_CTX, normalize_tenant, current_tenant, scoped_id
+    ENH_TENANT = True
+except Exception:
+    TENANT = SESSION_CTX = None
+    normalize_tenant = lambda value: "default"
+    current_tenant = lambda: "default"
+    scoped_id = lambda sid: str(sid or "default")
+    ENH_TENANT = False
+
+try:
+    from shared_cache import SharedCache
+    ENH_SHARED_CACHE = True
+except Exception:
+    SharedCache = None
+    ENH_SHARED_CACHE = False
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
@@ -356,6 +374,12 @@ MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_MAX_FOLDS", "5000"))
 MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_MAX_SESSIONS", "2000"))
 MAINTENANCE_EVERY = int(os.environ.get("COMPACTION_PROXY_MAINTENANCE_EVERY", "100"))
 FOLD_ENCRYPT = os.environ.get("COMPACTION_PROXY_FOLD_ENCRYPT", "0") == "1"
+
+# V11 P6: multi-instance / multi-tenant
+INSTANCE_ID = os.environ.get("COMPACTION_PROXY_INSTANCE_ID") or socket.gethostname()
+MAINTENANCE_OWNER = os.environ.get("COMPACTION_PROXY_MAINTENANCE_OWNER", "1") == "1"
+REDIS_URL = os.environ.get("COMPACTION_PROXY_REDIS_URL", "")
+SHARED_STORAGE = os.environ.get("COMPACTION_PROXY_STORAGE", "sqlite")
 
 # V11 P2/P4/P5: evidence floor, contract retry, learned policy, capability profile
 EVIDENCE_FLOOR = float(os.environ.get("COMPACTION_PROXY_EVIDENCE_FLOOR", "0.75"))
@@ -988,6 +1012,7 @@ class Metrics:
 metrics = Metrics()
 token_calibrator = TokenCalibrator() if (ENH_CALIBRATION and TokenCalibrator is not None) else None
 cost_tracker = CostTracker() if (ENH_COST and CostTracker is not None) else None
+shared_cache = SharedCache(REDIS_URL) if (ENH_SHARED_CACHE and SharedCache is not None) else None
 COMPACTION_USAGE = contextvars.ContextVar("compaction_usage", default=None)
 
 # ── V8: 语义保真度增强组件(可选) ────────────────────────────────────
@@ -1002,7 +1027,8 @@ context_policy = ContextPolicy(floor=EVIDENCE_FLOOR) if (ENH_POLICY and POLICY_E
 
 
 def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float,
-                           cache_hit: bool = False, model: str = "") -> None:
+                           cache_hit: bool = False, model: str = "",
+                           session_id: str = "") -> None:
     """Cost attribution (V11 P5): measured usage when available, estimate otherwise."""
     usage = COMPACTION_USAGE.get()
     before_t = estimate_tokens_accurate(before_msgs)
@@ -1023,7 +1049,8 @@ def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float,
     metrics.observe("compaction_latency_ms", latency_ms)
     if cost_tracker is not None:
         cost_tracker.record(
-            session_id="", model=model or (usage.get("model") if isinstance(usage, dict) else "") or "",
+            session_id=session_id, tenant_id=current_tenant(),
+            model=model or (usage.get("model") if isinstance(usage, dict) else "") or "",
             before_tokens=before_t, after_tokens=summary_t,
             cost_tokens=(0 if cache_hit else call_tokens),
             latency_ms=latency_ms, cache_hit=cache_hit,
@@ -2203,7 +2230,7 @@ def sanitize_tool_pairs(messages: list) -> list:
 
     return result
 
-def extract_session_id(body: dict, headers: dict) -> str:
+def _extract_session_id_raw(body: dict, headers: dict) -> str:
     """
     V5: Extract session identifier from request body or headers.
     Priority: header > body metadata > conversation_id > stable content hash > UUID.
@@ -2297,6 +2324,15 @@ def extract_session_id(body: dict, headers: dict) -> str:
 
     # 5. Last resort: generate a UUID (caller should echo it back via header/cookie)
     return f"gen-{uuid.uuid4().hex[:16]}"
+
+
+def extract_session_id(body: dict, headers: dict) -> str:
+    """Tenant-scoped session id; also published for the response header."""
+    raw = _extract_session_id_raw(body, headers)
+    sid = scoped_id(raw)
+    if SESSION_CTX is not None:
+        SESSION_CTX.set(sid)
+    return sid
 
 # ── 日志设置 ──────────────────────────────────────────────────────────
 logger = logging.getLogger("compaction-proxy")
@@ -4773,12 +4809,14 @@ async def compact_messages(
         metrics.inc("compaction_circuit_breaker_skip")
         return None
 
-    cached = compaction_cache.get(old_messages, salt=system_prompt_override or "")
+    cached = shared_cache.get(old_messages, salt=system_prompt_override or "") if shared_cache else None
+    if cached is None:
+        cached = compaction_cache.get(old_messages, salt=system_prompt_override or "")
     if cached is not None:
         logger.info(f"Compaction cache hit ({len(cached)} chars)")
         metrics.inc("compaction_cache_hit")
         try:
-            record_compaction_cost(old_messages, cached, 0.0, cache_hit=True)
+            record_compaction_cost(old_messages, cached, 0.0, cache_hit=True, session_id=session_id)
         except Exception:
             pass
         return cached
@@ -5003,6 +5041,8 @@ async def compact_messages(
             logger.info(f"Compaction summary generated: {len(content)} chars (provider={compaction_provider.name})")
 
             compaction_cache.put(old_messages, content, salt=system_prompt_override or "")
+            if shared_cache is not None:
+                shared_cache.put(old_messages, content, salt=system_prompt_override or "")
 
             # V5: Persist per-session prior summary (no more global state)
             # Skip saving during parallel block compaction to avoid corruption
@@ -6081,7 +6121,7 @@ async def do_compaction(
     base_keep = requested_keep if isinstance(requested_keep, int) and requested_keep >= 2 else KEEP_RECENT_TURNS
     adaptive_max_keep = max(2, user_msg_count // 2) if user_msg_count > 0 else base_keep
     # V11 P4: task class keys the adaptive policy bandit
-    task_class = classify_task(messages) if ENH_POLICY else "prose"
+    task_class = f"{current_tenant()}:{classify_task(messages)}" if ENH_POLICY else "prose"
 
     for attempt in range(1, MAX_COMPACTION_RETRIES + 1):
         keep_turns = min(base_keep - (attempt - 1) * 2, adaptive_max_keep)
@@ -6218,7 +6258,8 @@ async def do_compaction(
             continue
 
         # V11 P5: cost attribution (compaction call cost vs tokens saved)
-        record_compaction_cost(selected_old, summary, (time.monotonic() - t0) * 1000)
+        record_compaction_cost(selected_old, summary, (time.monotonic() - t0) * 1000,
+                               session_id=session_id)
 
         # V5: Post-compact hook — allow hook to modify summary
         if hook_manager:
@@ -6277,7 +6318,8 @@ async def do_compaction(
                 if probes and probes["failures"]:
                     summary = summary + "\n\n" + probes["note"]
 
-                ref = fold_archive.put(session_id, "compaction", old_msgs)
+                ref = fold_archive.put(session_id, "compaction", old_msgs,
+                                   tenant_id=current_tenant() if ENH_TENANT else "default")
                 digest = build_fold_digest(old_msgs, commitments=commitments)
                 summary = (
                     (state_snapshot + "\n\n") if state_snapshot else ""
@@ -6318,7 +6360,7 @@ async def do_compaction(
             f"{len(recent_msgs)} recent = {new_msg_count} total"
         )
         metrics.inc("compaction_attempt_success")
-        if MAINTENANCE_EVERY > 0 and metrics.get("compaction_attempt_success") % MAINTENANCE_EVERY == 0:
+        if MAINTENANCE_OWNER and MAINTENANCE_EVERY > 0 and metrics.get("compaction_attempt_success") % MAINTENANCE_EVERY == 0:
             run_maintenance()
 
         # Preflight safety verification (V5 FIX: use saved original_messages, not body which is already compacted)
@@ -6912,7 +6954,7 @@ async def handle_fold_retrieve(request: web.Request) -> web.Response:
     ref = request.match_info.get("ref", "")
     if not ref.startswith("fold:"):
         ref = "fold:" + ref
-    item = fold_archive.get(ref)
+    item = fold_archive.get(ref, tenant_id=current_tenant() if ENH_TENANT else None)
     if item is None:
         return web.json_response({"error": f"fold ref {ref} not found"}, status=404)
     msgs = item.get("messages") or []
@@ -7321,6 +7363,12 @@ async def handle_health(request: web.Request) -> web.Response:
             "fold_encrypted": bool(fold_archive.encrypted) if fold_archive else False,
         },
         "cost_recent": cost_tracker.summary() if cost_tracker else {"events": 0},
+        "instance_id": INSTANCE_ID,
+        "storage": {
+            "mode": SHARED_STORAGE,
+            "maintenance_owner": MAINTENANCE_OWNER,
+            "redis_cache": shared_cache.backend if shared_cache else "disabled",
+        },
         "compaction_model": COMPACTION_MODEL,
         "keep_recent_turns": KEEP_RECENT_TURNS,
         "max_retries": MAX_COMPACTION_RETRIES,
@@ -7942,7 +7990,7 @@ def _rate_limit_middleware():
     @web.middleware
     async def middleware(request, handler):
         if RATE_LIMIT > 0:
-            ip = request.remote or "unknown"
+            ip = f"{current_tenant()}:{request.remote or 'unknown'}"
             now = time.time()
             tokens, last = _RATE_STATE.get(ip, (float(RATE_LIMIT), now))
             tokens = min(float(RATE_LIMIT), tokens + (now - last) * RATE_LIMIT / 60.0)
@@ -7953,9 +8001,29 @@ def _rate_limit_middleware():
     return middleware
 
 
+@web.middleware
+async def tenant_middleware(request, handler):
+    tenant = normalize_tenant(request.headers.get("X-Tenant-Id") or request.query.get("tenant") or "default")
+    token = TENANT.set(tenant) if TENANT is not None else None
+    try:
+        resp = await handler(request)
+    finally:
+        if token is not None:
+            TENANT.reset(token)
+    try:
+        resp.headers["X-Tenant-Id"] = tenant
+        resp.headers["X-Instance-Id"] = INSTANCE_ID
+        sid = SESSION_CTX.get() if SESSION_CTX is not None else None
+        if sid:
+            resp.headers["X-Session-Id"] = sid.split(":", 1)[-1]
+    except Exception:
+        pass
+    return resp
+
+
 app = web.Application(
     client_max_size=MAX_BODY_MB * 1024 * 1024,
-    middlewares=[_rate_limit_middleware()],
+    middlewares=[tenant_middleware, _rate_limit_middleware()],
 )
 if REQUIRE_AUTH and not API_SECRET:
     logger.error("COMPACTION_PROXY_REQUIRE_AUTH=1 requires COMPACTION_PROXY_API_SECRET; refusing to start")

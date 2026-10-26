@@ -153,7 +153,7 @@ class TestSafety(unittest.TestCase):
 class TestSessionId(unittest.TestCase):
     def test_header_priority(self):
         body = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
-        self.assertEqual(cp.extract_session_id(body, {"X-Session-Id": "abc"}), "abc")
+        self.assertEqual(cp.extract_session_id(body, {"X-Session-Id": "abc"}), "default:abc")
 
     def test_fingerprint_stable(self):
         body = {"model": "m", "messages": [

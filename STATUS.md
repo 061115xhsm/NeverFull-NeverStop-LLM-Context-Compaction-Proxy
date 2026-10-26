@@ -44,6 +44,15 @@
 - 并发 8×25 次 fold/state/session 写入：**0 错误**
 - HTTP：100 次串行 health p50 1ms；200 并发 0.09s；畸形 JSON 400；1.5MB 413；上游宕机 502
 
+
+### P6 多租户 / 多实例（2026-10）
+- `X-Tenant-Id` 全链路：session id 命名空间、fold 读取校验、限流桶、成本事件
+- `COMPACTION_PROXY_REDIS_URL` 共享压缩缓存（Redis SETEX；无 Redis 时本地）
+- `COMPACTION_PROXY_INSTANCE_ID` + `X-Instance-Id` 响应头；`/health.storage` 暴露模式
+- `COMPACTION_PROXY_MAINTENANCE_OWNER=0` 让从实例跳过定期清理
+- `storage_backend.py` 移到根目录（SQLite/Postgres/Redis 适配器）；Postgres/Redis 需可选依赖，尚未接入 SessionStore
+- 流式集成测试 + 归档密钥轮换 + 按请求成本追踪
+
 ## 仍未做（下一轮）
 
 - 多实例共享存储（Redis/Postgres）仍在 `attic/`；当前单进程

@@ -49,6 +49,7 @@ DEFAULT_DB = os.environ.get(
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS folds (
     ref         TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL DEFAULT 'default',
     session_id  TEXT NOT NULL,
     created_at  REAL NOT NULL,
     kind        TEXT NOT NULL,
@@ -103,6 +104,13 @@ class FoldArchive:
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(folds)").fetchall()}
+        if "tenant_id" not in cols:
+            self._conn.execute("ALTER TABLE folds ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+            self._conn.commit()
 
     def _init_encryption(self, key_path) -> None:
         try:
@@ -126,38 +134,58 @@ class FoldArchive:
     def encrypted(self) -> bool:
         return self._fernet is not None
 
-    def put(self, session_id: str, kind: str, messages: list, ref: Optional[str] = None) -> str:
+    def put(self, session_id: str, kind: str, messages: list, ref: Optional[str] = None,
+            tenant_id: Optional[str] = None) -> str:
         payload = json.dumps(messages, ensure_ascii=False)
         if self._fernet is not None:
             payload = "enc:v1:" + self._fernet.encrypt(payload.encode("utf-8")).decode("ascii")
+        if tenant_id:
+            tenant = tenant_id
+        elif ":" in session_id:
+            tenant = session_id.split(":", 1)[0]
+        else:
+            try:
+                from tenant import current_tenant
+                tenant = current_tenant()
+            except Exception:
+                tenant = "default"
         if ref is None:
-            raw = json.dumps(messages, ensure_ascii=False)
+            raw = tenant + "\x00" + json.dumps(messages, ensure_ascii=False)
             ref = "fold:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO folds(ref, session_id, created_at, kind, n_messages, approx_tokens, payload) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (ref, session_id, time.time(), kind, len(messages), _approx_tokens(messages), payload),
+                "INSERT OR REPLACE INTO folds(ref, tenant_id, session_id, created_at, kind, n_messages, approx_tokens, payload) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (ref, tenant, session_id, time.time(), kind, len(messages), _approx_tokens(messages), payload),
             )
             self._conn.commit()
         return ref
 
-    def get(self, ref: str) -> Optional[dict]:
+    def get(self, ref: str, tenant_id: Optional[str] = None) -> Optional[dict]:
         with self._lock:
-            row = self._conn.execute(
-                "SELECT ref, session_id, created_at, kind, n_messages, approx_tokens, payload FROM folds WHERE ref=?",
-                (ref,),
-            ).fetchone()
+            if tenant_id is None:
+                row = self._conn.execute(
+                    "SELECT ref, tenant_id, session_id, created_at, kind, n_messages, approx_tokens, payload "
+                    "FROM folds WHERE ref=?",
+                    (ref,),
+                ).fetchone()
+            else:
+                row = self._conn.execute(
+                    "SELECT ref, tenant_id, session_id, created_at, kind, n_messages, approx_tokens, payload "
+                    "FROM folds WHERE ref=? AND tenant_id=?",
+                    (ref, tenant_id),
+                ).fetchone()
         if row is None:
             return None
         return {
             "ref": row[0],
-            "session_id": row[1],
-            "created_at": row[2],
-            "kind": row[3],
-            "n_messages": row[4],
-            "approx_tokens": row[5],
-            "messages": self._decode(row[6]),
+            "tenant_id": row[1],
+            "session_id": row[2],
+            "created_at": row[3],
+            "kind": row[4],
+            "n_messages": row[5],
+            "approx_tokens": row[6],
+            "messages": self._decode(row[7]),
         }
 
     def _decode(self, payload: str):

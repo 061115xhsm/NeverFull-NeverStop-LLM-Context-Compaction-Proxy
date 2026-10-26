@@ -13,10 +13,12 @@ class CostTracker:
         self._lock = threading.Lock()
 
     def record(self, session_id: str, model: str, before_tokens: int, after_tokens: int,
-               cost_tokens: int, latency_ms: float, cache_hit: bool = False) -> None:
+               cost_tokens: int, latency_ms: float, cache_hit: bool = False,
+               tenant_id: str = "default") -> None:
         saved = max(0, int(before_tokens) - int(after_tokens))
         event = {
             "ts": time.time(),
+            "tenant_id": (tenant_id or "default")[:32],
             "session_id": (session_id or "")[:24],
             "model": (model or "")[:40],
             "before": int(before_tokens),
@@ -38,11 +40,16 @@ class CostTracker:
         total_saved = sum(e["saved"] for e in events)
         lat = sorted(e["latency_ms"] for e in events)
         by_model: dict = {}
+        by_tenant: dict = {}
         for e in events:
             row = by_model.setdefault(e["model"] or "?", {"calls": 0, "cost": 0, "saved": 0})
             row["calls"] += 1
             row["cost"] += e["cost"]
             row["saved"] += e["saved"]
+            trow = by_tenant.setdefault(e.get("tenant_id", "default"), {"calls": 0, "cost": 0, "saved": 0})
+            trow["calls"] += 1
+            trow["cost"] += e["cost"]
+            trow["saved"] += e["saved"]
         return {
             "events": len(events),
             "cost_tokens": total_cost,
@@ -52,5 +59,6 @@ class CostTracker:
             "p50_latency_ms": lat[len(lat) // 2],
             "p95_latency_ms": lat[min(len(lat) - 1, int(0.95 * len(lat)))],
             "by_model": by_model,
+            "by_tenant": by_tenant,
             "last": events[-1],
         }
