@@ -49,3 +49,9 @@ README.pdf
 # Large LongBench dataset (download on demand)
 benchmark/data/longbench_data.zip
 benchmark/data/longbench/
+
+# Research raw API dumps (reproducible via research/harvest*.py)
+research/raw/
+
+# Runtime cache artifact
+cache.sqlite

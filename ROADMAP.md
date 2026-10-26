@@ -3,6 +3,11 @@
 > 发展路线图(中英双语 · Bilingual)
 > 对照代码核实的现状差距 + 三阶段实施计划
 
+> **2026-10-26 状态修订（V11）**：本表“✅ 已实现”中有 6 项是写了文件但**主程序从未 import**
+> （memskill_rl / incremental_compaction / async_precompressor / storage_backend / rust_ffi / rust），
+> 已移入 `attic/`。新增 P0 工程基线（requirements / CI / 28 项测试）与 P1 可逆折叠
+> （`folding.py`，`COMPACTION_PROXY_FOLDING=1` 开启）。详见 `STATUS.md` 与 `research/RESEARCH-2026.md`。
+
 ---
 
 ## 现状差距表 · Current vs Planned

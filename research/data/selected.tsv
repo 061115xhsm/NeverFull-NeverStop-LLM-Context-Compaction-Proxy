@@ -1,0 +1,109 @@
+agent-memory	2024-05-23	426	2405.14831	HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models
+agent-memory	2024-07-05	125	2407.04363	AriGraph: Learning Knowledge Graph World Models with Episodic Memory for LLM Agents
+agent-memory	2024-09-11	423	2409.07429	Agent Workflow Memory
+agent-memory	2025-07-03	246	2507.02259	MemAgent: Reshaping Long-Context LLM with Multi-Conv RL-based Memory Agent
+agent-memory	2025-07-10	175	2507.07957	MIRIX: Multi-Agent Memory System for LLM-Based Agents
+agent-memory	2026-03-12	24	2603.11768	Governing Evolving Memory in LLM Agents: Risks, Mechanisms, and the Stability and Safety Governed Memory (SSGM) Framewor
+agent-memory	2026-03-13	2	2603.12631	Joint Optimization of Multi-agent Memory System
+agent-memory	2026-04-24	4	2604.23069	ContextWeaver: Selective and Dependency-Structured Memory Construction for LLM Agents
+agent-memory	2026-04-30	14	2604.27707	Contextual Agentic Memory is a Memo, Not True Memory
+agent-memory	2026-05-17	4	2605.17304	Compress the Context, Keep the Commitments: A Formal Framework for Verifiable LLM Context Compression
+agent-memory	2026-05-19	5	2605.19952	Rethinking How to Remember: Beyond Atomic Facts in Lifelong LLM Agent Memory
+agent-memory	2026-06-10	4	2606.12290	Selection Integrity for LLM Graph Memory: An Accumulability Criterion for Information-Flow-Blind Retrieval
+agent-memory	2026-07-02	4	2607.01935	A-TMA: Decoupling State-Aware Memory Failures in Long-Term Agent Memory
+agent-memory	2026-07-03	-	2607.02881	PraMem: Practice-derived Experiential Memory for Long-horizon Behavior Prediction
+agent-memory	2026-07-15	1	2607.20553	CMI-Mem: Toward Generalizable Long-Term Memory Management via CMI-Augmented Reinforcement Learning
+agent-memory	2026-07-17	5	2607.22690	LazyMem: Retrieve Broadly, Construct Selectively for Efficient Long-Term Agent Memory
+agent-memory	2026-08-12	-	2608.11775	The Sleeping Agent: What Gist-Based Context Compression Loses and Why
+agent-memory	2026-10-19	-	2610.27377	REM: What to Store, When to Recall, What to Forget in Experience Memory for Coding Agents
+agent-memory	2026-10-19	-	2610.25707	Whose Credential Is It? How Owner Attribution in Agent MemoryShapes Cross-User Account Misuse
+agent-memory	2026-10-21	-	2610.29823	MemoryTax: The Bitter Lesson of Agent Memory
+agent-memory	2026-10-21	-	2610.29671	Uni-Mem: Learning a Long-Horizon Agentic Memory Manager with Unified Online Policy Optimization
+agent-memory	2026-10-21	-	2610.29357	Memory-Centric Continual Learning for AI Agents
+agent-memory	2026-10-23	-	2610.32464	Agentic Memory Management Is the Next Frontier of Information Retrieval
+agent-memory	2025-02-17	-	2502.12110	A-MEM: Agentic Memory for LLM Agents
+agent-memory	2025-07-04	-	2507.03724	MemOS: A Memory OS for AI System
+context-folding	2026-05-24	1	2605.24930	H$^{2}$MT: Semantic Hierarchy-Aware Hierarchical Memory Transformer
+context-folding	2026-07-01	1	2607.00725	Recall Is Not Enough: A Reader-Context Diagnostic for Budget-Constrained Retrieval-Augmented Generation
+context-folding	2026-07-09	4	2607.08032	What to Keep, What to Forget: A Rate--Distortion View of Memory Compaction in LLMs and Agents
+context-folding	2026-09-29	-	2609.37743	ContextRender: From Execution Dependencies to Agent Context
+context-folding	2026-09-30	-	2609.40118	Persistent Context Graphs for Efficient Memory Compaction in LLM Agents
+context-folding	2026-10-04	-	2610.04838	MemTrace: State-Consistent Memory for Long-Horizon Coding Agents
+context-folding	2026-10-05	-	2610.05885	The Optimization Landscape of Learning Compacted Context Models
+context-folding	2026-10-06	-	2610.07863	ReFold: Training-Free Reversible Inter-Turn Context Folding for Long-Horizon Agents
+context-folding	2026-10-08	-	2610.11287	REMORY: Learning Residual Memory for Context Compaction
+context-folding	2026-10-09	-	2610.23950	Compaction-Aware Reinforcement Learning For Ascend Triton Kernel Generation
+context-folding	2026-10-14	-	2610.20582	Latent Compaction with Test-Time Training
+context-folding	2026-10-14	-	2610.20927	Prune the Summary, Not the History: Source-Judged Compaction for Long-Horizon Agents
+context-folding	2026-10-14	-	2610.20116	Maximising Transparency in Context Compaction Improves Retention of Facts and Commitments for Lightweight Coding Agents
+context-folding	2026-10-18	-	2610.25516	Bud ContextCompact 2.0: Context Compaction for Agent Success and Accuracy with Small Language Models and Constrained Con
+context-folding	2026-10-19	-	2610.25933	The KV-Surgeon: Compensation-Aware Offline KV-Cache Compaction
+context-folding	2026-10-21	-	2610.29869	Compaction Laundering: Provenance Destruction in Context-Compacting Coding Agents
+context-folding	2026-10-22	-	2610.31710	Compact-Bench: Measuring What Context Compaction Costs Long-Horizon Coding Agents
+context-folding	2026-10-22	-	2610.31284	Retrieval-Augmented Online Textual Memory for Episodic Memory Video Question Answering
+context-folding	2023-10-12	-	2310.08560	MemGPT: Towards LLMs as Operating Systems
+eval-bench	2024-07-24	5	2407.17095	MemBench: Memorized Image Trigger Prompt Dataset for Diffusion Models
+eval-bench	2024-10-03	141	2410.02694	HELMET: How to Evaluate Long-Context Language Models Effectively and Thoroughly
+eval-bench	2025-06-20	92	2506.21605	MemBench: Towards More Comprehensive Evaluation on the Memory of LLM-based Agents
+eval-bench	2026-01-21	2	2602.15843	The Perplexity Paradox: Why Code Compresses Better Than Math in LLM Prompts
+eval-bench	2026-03-06	4	2603.23527	Compression Method Matters: Benchmark-Dependent Output Dynamics in LLM Prompt Compression
+eval-bench	2026-07-24	3	2607.21962	Ground Truth First: A Longitudinal Evaluation Instrument for Agent Memory, and the Tenure Crossover in Memory-Architectu
+eval-bench	2026-07-27	1	2608.26175	Lost in Compression: A Controlled Cross-Lingual Audit of Extractive Prompt Compressors
+eval-bench	2026-08-02	4	2608.01056	Control Under Compression: Reliability Frontiers for Tool-Using Agents
+eval-bench	2026-08-19	-	2609.22114	An Empirical Cost Attribution of Context-Compression Gateways in Multi-Turn Coding Agents
+eval-bench	2026-08-20	8	2608.19652	Can Agent Memory Systems Track Evolving State?
+eval-bench	2026-09-01	1	2609.01272	Making Prospective Memory SLM-Shaped: Typed Intention Stores for Small-Model Agents
+eval-bench	2026-10-13	-	2610.17763	Memory Echo in Single-Agent Long-Term Memory: Lifecycle Evaluation and Provenance-Guided Mitigation
+eval-bench	2026-10-19	-	2610.26827	KEEP-Bench: Evaluating Evidence Preservation in Context Compression
+kv-cache	2024-07-02	499	2407.02490	MInference 1.0: Accelerating Pre-filling for Long-Context LLMs via Dynamic Sparse Attention
+kv-cache	2024-10-28	-	2410.21465	ShadowKV: KV Cache in Shadows for High-Throughput Long-Context LLM Inference
+kv-cache	2025-02-16	573	2502.11089	Native Sparse Attention: Hardware-Aligned and Natively Trainable Sparse Attention
+kv-cache	2023-09-29	-	2309.17453	Efficient Streaming Language Models with Attention Sinks
+long-stream	2024-06-16	598	2406.10774	Quest: Query-Aware Sparsity for Efficient Long-Context LLM Inference
+long-stream	2024-12-31	401	2501.00663	Titans: Learning to Memorize at Test Time
+long-stream	2025-02-18	234	2502.13189	MoBA: Mixture of Block Attention for Long-Context LLMs
+long-stream	2023-05-17	837	2305.10250	MemoryBank: Enhancing Large Language Models with Long-Term Memory
+long-stream	2025-04-28	-	2504.19413	Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory
+other	2024-02-05	800	2402.02750	KIVI: A Tuning-Free Asymmetric 2bit Quantization for KV Cache
+other	2024-04-22	-	2404.14469	SnapKV: LLM Knows What You are Looking for Before Generation
+other	2025-01-27	1	2503.15509	Representing data in words: A context engineering approach
+other	2026-03-09	5	2603.09022	MEMO: Memory-Augmented Model Context Optimization for Robust Multi-Turn Multi-Agent LLM Games
+other	2026-05-14	4	2605.15156	MeMo: Memory as a Model
+other	2023-06-24	-	2306.14048	H$_2$O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models
+prompt-compression	2024-03-19	-	2403.12968	LLMLingua-2: Data Distillation for Efficient and Faithful Task-Agnostic Prompt Compression
+prompt-compression	2026-02-02	17	2602.01719	COMI: Coarse-to-fine Context Compression via Marginal Information Gain
+prompt-compression	2026-02-02	13	2602.01840	Read As Human: Compressing Context via Parallelizable Close Reading and Skimming
+prompt-compression	2026-02-02	3	2602.01778	Data Distribution Matters: A Data-Centric Perspective on Context Compression for Large Language Model
+prompt-compression	2026-02-03	9	2602.03226	ATACompressor: Adaptive Task-Aware Compression for Efficient Long-Context Processing in LLMs
+prompt-compression	2026-02-03	2	2602.03784	Fix the Structural Bottleneck: Context Compression via Explicit Information Transmission
+prompt-compression	2026-03-20	3	2603.19733	PoC: Performance-oriented Context Compression for Large Language Models via Performance Prediction
+prompt-compression	2026-04-03	9	2604.02985	Prompt Compression in the Wild: Measuring Latency, Rate Adherence, and Quality for Faster LLM Inference
+prompt-compression	2026-04-21	13	2604.19572	A Self-Evolving Framework for Efficient Terminal Agents via Observational Context Compression
+prompt-compression	2026-05-10	3	2605.09463	Beyond Position Bias: Shifting Context Compression from Position-Driven to Semantic-Driven
+prompt-compression	2026-07-01	2	2607.00368	Beyond Perplexity: A Behavioral Evaluation Framework for Deployment-Memory Claims in LLM Test-Time Training
+prompt-compression	2026-07-30	2	2607.27739	Measuring Alignment With Reader Highlights Net of Position and Length
+prompt-compression	2026-09-13	2	2609.14245	The Attribution-Compression Frontier in Retrieval-Augmented Generation
+prompt-compression	2023-04-17	-	2304.08467	Learning to Compress Prompts with Gist Tokens
+prompt-compression	2023-04-24	-	2304.12102	Unlocking Context Constraints of LLMs: Enhancing Context Efficiency of LLMs with Self-Information-Based Content Filterin
+prompt-compression	2023-07-13	-	2307.06945	In-context Autoencoder for Context Compression in a Large Language Model
+prompt-compression	2023-10-09	-	2310.05736	LLMLingua: Compressing Prompts for Accelerated Inference of Large Language Models
+prompt-compression	2023-10-10	-	2310.06839	LongLLMLingua: Accelerating and Enhancing LLMs in Long Context Scenarios via Prompt Compression
+rag	2025-02-18	9	2502.12962	Infinite Retrieval: Attention Enhanced LLMs in Long-Context Processing
+rag	2026-02-10	1	2602.10021	Decoupled Reasoning with Implicit Fact Tokens (DRIFT): A Dual-Model Framework for Efficient Long-Context Inference
+rag	2026-06-10	5	2606.11680	Organize then Retrieve: Hierarchical Memory Navigation for Efficient Agents
+rag	2026-10-06	-	2610.08527	PHBA: Prefix-State Hybrid Block Attention
+rag	2026-10-09	-	2610.13075	LongHarness: Advancing Agentic Reasoning over 100M-Token Corpora via Stateful Evidence Management
+rag	2026-10-15	-	2610.21073	Skip the Compressor: Coding Agents Fix More Issues When They Pick Whole Files
+rag	2023-10-06	-	2310.04408	RECOMP: Improving Retrieval-Augmented LMs with Compression and Selective Augmentation
+rl-policy	2025-08-27	241	2508.19828	Memory-R1: Enhancing Large Language Model Agents to Manage and Utilize Memories via Reinforcement Learning
+rl-policy	2026-05-20	13	2605.21768	Memory-R2: Fair Credit Assignment for Long-Horizon Memory-Augmented LLM Agents
+structured	2026-04-10	2	2604.09150	Think Less, Know More: State-Aware Reasoning Compression with Knowledge Guidance for Efficient Reasoning
+structured	2026-09-28	-	2609.35759	Scaling Long-Form Story Generation via Narrative State Tracking
+structured	2026-10-07	-	2610.09772	Decoupling Logic from Persona: Structural Immunity of Edge LLM Agents to Context Pollution
+structured	2026-10-08	-	2610.11552	Safe, Persistent, and Evolving Agent Harness for Understanding Partially Observable Worlds
+structured	2026-10-15	-	2610.21900	TEM: Temporal State Tracking Memory for Large Language Model Agents
+summarization	2026-10-20	-	2610.28577	Cache Engineering for Agents
+survey	2025-07-17	168	2507.13334	A Survey of Context Engineering for Large Language Models
+survey	2026-03-08	71	2603.07670	Memory for Autonomous LLM Agents:Mechanisms, Evaluation, and Emerging Frontiers
+survey	2026-05-07	44	2605.06716	From Storage to Experience: A Survey on the Evolution of LLM Agent Memory Mechanisms
+survey	2026-06-03	43	2606.04990	From Agent Traces to Trust: A Survey of Evidence Tracing and Execution Provenance in LLM Agents

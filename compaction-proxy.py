@@ -170,6 +170,20 @@ except Exception:
     FailoverManager = GracefulDegrader = MetricsCollector = Tracer = None
     ENH_OBSERVABILITY = False
 
+# ── V11 P1: reversible context folding (arXiv:2610.07863, 2609.40118,
+#    2610.20927, 2605.17304, 2610.29869, 2610.26827) ──────────────────────
+try:
+    from folding import (
+        FoldArchive, build_fold_digest, render_fold_block,
+        verify_commitments, format_missing_note, SUMMARY_SECTION_PROMPT,
+    )
+    ENH_FOLDING = True
+except Exception:
+    FoldArchive = build_fold_digest = render_fold_block = None
+    verify_commitments = format_missing_note = None
+    SUMMARY_SECTION_PROMPT = ""
+    ENH_FOLDING = False
+
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
@@ -282,6 +296,17 @@ BACKGROUND_SESSIONS = int(os.environ.get("COMPACTION_PROXY_BACKGROUND_SESSIONS",
 
 # V5: 可插拔压缩引擎
 COMPRESSION_ENGINE = os.environ.get("COMPACTION_PROXY_ENGINE", "default")
+
+# V11 P1: reversible folding (default off until validated end-to-end).
+# When on: folded history is archived verbatim, addressed by ref, and the
+# summary is checked against a commitment contract before being persisted.
+FOLDING_ENABLED = os.environ.get("COMPACTION_PROXY_FOLDING", "0") == "1"
+FOLD_ARCHIVE_PATH = os.environ.get(
+    "COMPACTION_PROXY_FOLD_DB",
+    os.path.join(os.path.expanduser("~/.local/share/compaction-proxy"), "folds.db"),
+)
+# Strict session mode: never derive a session id from message content.
+STRICT_SESSION = os.environ.get("COMPACTION_PROXY_STRICT_SESSION", "0") == "1"
 
 # V5: Dual-Layer Compression (inspired by Hermes gateway+agent architecture)
 DUAL_LAYER_GATEWAY_RATIO = float(os.environ.get("COMPACTION_PROXY_DUAL_GATEWAY_RATIO", "0.15"))  # Keep 15% (85% reduction)
@@ -890,6 +915,7 @@ metrics = Metrics()
 SEMANTIC_FIDELITY_FLOOR = float(os.environ.get("COMPACTION_PROXY_FIDELITY_FLOOR", "0.92"))
 semantic_fidelity_scorer = FidelityScorer() if ENH_FIDELITY and FidelityScorer is not None else None
 quality_breaker = QualityBreaker(failure_threshold=3, cooldown_seconds=60) if ENH_FIDELITY and QualityBreaker is not None else None
+fold_archive = FoldArchive(FOLD_ARCHIVE_PATH) if (ENH_FOLDING and FOLDING_ENABLED and FoldArchive is not None) else None
 
 # ── V4: Episodic-Semantic Dual-Layer Memory ──────────────────────────
 
@@ -2056,6 +2082,10 @@ def extract_session_id(body: dict, headers: dict) -> str:
     model = body.get("model", "")
     if model:
         fingerprint_parts.append(f"model:{model}")
+    # Include the API `user` field (OpenAI-compatible clients) for isolation
+    user_tag = body.get("user")
+    if isinstance(user_tag, str) and user_tag.strip():
+        fingerprint_parts.append(f"user:{user_tag.strip()[:80]}")
 
     # Include system message fingerprint (hash of system content)
     for msg in messages:
@@ -2087,8 +2117,21 @@ def extract_session_id(body: dict, headers: dict) -> str:
                 fingerprint_parts.append(f"u{user_count}:{text[:200]}")
             user_count += 1
 
+    if STRICT_SESSION:
+        logger.error(
+            "Strict session mode: no X-Session-Id header / metadata.session_id on request; "
+            "refusing content-fingerprint identity (folding and session memory disabled for this request)"
+        )
+        metrics.inc("session_unidentified_strict")
+        return f"ephemeral-{uuid.uuid4().hex[:12]}"
+
     if fingerprint_parts:
         fingerprint = "|".join(fingerprint_parts)
+        logger.warning(
+            "Session id derived from content fingerprint (weak identity); "
+            "prefer an X-Session-Id header to avoid cross-session collisions"
+        )
+        metrics.inc("session_fingerprint_fallback")
         return hashlib.sha256(fingerprint.encode()).hexdigest()[:16]
 
     # 5. Last resort: generate a UUID (caller should echo it back via header/cookie)
@@ -4584,6 +4627,8 @@ async def compact_messages(
 
         # Build incremental compaction request
         system_content = system_prompt_override if system_prompt_override else COMPACTION_SYSTEM_PROMPT
+        if FOLDING_ENABLED and ENH_FOLDING and SUMMARY_SECTION_PROMPT:
+            system_content += "\n\n" + SUMMARY_SECTION_PROMPT
         identifiers = extract_identifiers(new_msgs)
         identifier_note = ""
         if identifiers:
@@ -4644,6 +4689,8 @@ async def compact_messages(
         commitment_note = format_commitments_for_prompt(commitments)
 
         system_content = (system_prompt_override if system_prompt_override else COMPACTION_SYSTEM_PROMPT) + identifier_note
+        if FOLDING_ENABLED and ENH_FOLDING and SUMMARY_SECTION_PROMPT:
+            system_content += "\n\n" + SUMMARY_SECTION_PROMPT
         if commitment_note:
             system_content += "\n\n" + commitment_note
 
@@ -5974,6 +6021,30 @@ async def do_compaction(
                 summary, messages, {"session_id": session_id, "attempt": attempt}
             )
 
+        # V11 P1: reversible folding — archive the originals verbatim, render a typed
+        # placeholder with a retrievable ref, and verify the commitment contract.
+        if FOLDING_ENABLED and ENH_FOLDING and fold_archive is not None:
+            try:
+                identifiers = extract_identifiers(old_msgs)
+                contract = verify_commitments(summary, commitments, identifiers)
+                metrics.inc("fold_contract_checked")
+                if contract["missing"] or contract["identifiers_missing"]:
+                    metrics.inc("fold_contract_miss")
+                    logger.warning(
+                        "Commitment contract: %d/%d commitments and %d/%d identifiers unverified",
+                        contract["total"] - contract["kept"], contract["total"],
+                        contract["identifiers_total"] - contract["identifiers_kept"],
+                        contract["identifiers_total"],
+                    )
+                    summary = summary + "\n\n" + format_missing_note(contract)
+                ref = fold_archive.put(session_id, "compaction", old_msgs)
+                digest = build_fold_digest(old_msgs, commitments=commitments)
+                summary = render_fold_block(digest, ref) + "\n\n" + summary
+                metrics.inc("fold_archive_write")
+                logger.info("Folded %d messages into %s", len(old_msgs), ref)
+            except Exception as e:
+                logger.warning("Folding skipped (non-fatal): %s", e)
+
         # Build compacted message list (V4: includes semantic memory, pruning, cache ordering)
         body["messages"] = build_compacted_messages(summary, recent_msgs)
 
@@ -6582,6 +6653,20 @@ async def handle_arc_retrieve(request: web.Request) -> web.Response:
     })
 
 
+@require_auth
+async def handle_fold_retrieve(request: web.Request) -> web.Response:
+    """V11 P1: retrieve a folded (elided) block verbatim by ref."""
+    if not (FOLDING_ENABLED and ENH_FOLDING and fold_archive is not None):
+        return web.json_response({"error": "folding is disabled"}, status=404)
+    ref = request.match_info.get("ref", "")
+    if not ref.startswith("fold:"):
+        ref = "fold:" + ref
+    item = fold_archive.get(ref)
+    if item is None:
+        return web.json_response({"error": f"fold ref {ref} not found"}, status=404)
+    return web.json_response(item)
+
+
 # ── 主处理函数 ──────────────────────────────────────────────────────────
 
 async def handle_chat_completions(request: web.Request) -> web.Response:
@@ -6905,7 +6990,12 @@ async def handle_health(request: web.Request) -> web.Response:
         sem_mem_stats = {k: len(v) for k, v in semantic_memory._knowledge.items()}
     return web.json_response({
         "status": "ok",
-        "version": "V6",
+        "version": "V11",
+        "folding": {
+            "enabled": bool(FOLDING_ENABLED and ENH_FOLDING),
+            "archive": fold_archive.stats() if fold_archive else None,
+            "strict_session": STRICT_SESSION,
+        },
         "compaction_model": COMPACTION_MODEL,
         "keep_recent_turns": KEEP_RECENT_TURNS,
         "max_retries": MAX_COMPACTION_RETRIES,
@@ -7534,6 +7624,7 @@ app.router.add_post("/v1/messages/", handle_anthropic_messages)
 
 # V3: ARC 回查端点
 app.router.add_get("/arc/{arc_id}", handle_arc_retrieve)
+app.router.add_get("/fold/{ref}", handle_fold_retrieve)
 
 # V5: Session & Profile endpoints
 app.router.add_post("/session", handle_session_create)
