@@ -17,6 +17,8 @@
 
 > **V11 状态（2026-10）**：当前实现边界、已知差距与开关见 [STATUS.md](STATUS.md)；
 > 压缩正确性主指标已改为**配对延续评测 + 证据保留率**（见下文 Benchmark）。
+>
+> **Project report:** [English PDF](report/project-report-en.pdf) · [中文 PDF](report/project-report.pdf)
 
 **Built for long-context agents:** OpenClaw · Claude Code · Hermes · DeepSeek Harness — all verified integrations included.
 
