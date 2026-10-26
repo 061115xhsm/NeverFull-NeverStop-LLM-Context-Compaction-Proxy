@@ -67,6 +67,7 @@ DECISION_PATTERNS = {
     "goal": re.compile(r"(?:goal|目标|purpose|aim|task|任务|want\s+to|需要|trying\s+to)\s*[:：]?\s*(.{5,160})", re.I),
     "constraint": re.compile(r"(?:constraint|约束|limit|限制|must|必须|requirement|需求|cannot|不能|never|绝不|rule|规则)\s*[:：]?\s*(.{5,160})", re.I),
     "decision": re.compile(r"(?:decided|决定|chose|选择|will\s+use|使用|adopted|采用|switched|切换)\s*(?:to\s+)?(.{5,160})", re.I),
+    "task": re.compile(r"(?:todo|pending|next\s+step|待办|下一步|还需要|remaining)\s*[:：]?\s*(.{5,160})", re.I),
 }
 
 
@@ -274,6 +275,26 @@ class StateTable:
         except sqlite3.Error:
             files = dec = 0
         return {"files": files, "decisions": dec, "path": str(self.path)}
+
+    def prune(self, max_age_days: float = 30.0) -> int:
+        """Retention: drop old file rows and superseded decisions; keep active decisions."""
+        removed = 0
+        with self._lock:
+            if max_age_days and max_age_days > 0:
+                cutoff = time.time() - max_age_days * 86400
+                cur = self._conn.execute("DELETE FROM files WHERE ts < ?", (cutoff,))
+                removed += cur.rowcount or 0
+                cur = self._conn.execute(
+                    "DELETE FROM decisions WHERE ts < ? AND status = 'superseded'", (cutoff,)
+                )
+                removed += cur.rowcount or 0
+            self._conn.commit()
+            if removed:
+                try:
+                    self._conn.execute("VACUUM")
+                except sqlite3.Error:
+                    pass
+        return removed
 
     def close(self) -> None:
         try:

@@ -210,6 +210,11 @@ def synthetic() -> list:
                                             f"discussed priorities, and agreed to keep the current scope. " * 2}
         for i in range(20)
     ]
+    filler3 = [
+        {"role": "user", "content": f"Ops log {i}: health checks passed, queue depth normal, "
+                                            f"no alerts fired during the maintenance window. " * 2}
+        for i in range(24)
+    ]
     return [
         {"id": "synthetic-1", "messages": filler1 + [
             {"role": "user", "content": "Fix the bug in /tmp/proj/src/main.py and run pytest -q. "
@@ -229,6 +234,17 @@ def synthetic() -> list:
                 {"type": "tool_use", "name": "edit", "input": {"path": "/tmp/proj/app/api.ts"}}]},
             {"role": "assistant", "content": "We decided to use zod for validation. "
                                              "Constraint: never change /api/v1 paths."},
+        ]},
+        {"id": "synthetic-3", "messages": filler3 + [
+            {"role": "user", "content": "Restart the staging service on host db-3 and check "
+                                        "/var/log/app.log; never touch production."},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "name": "exec", "input": {"command": "systemctl restart staging"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t3",
+                 "content": "ERROR: unit staging.service not found"}]},
+            {"role": "assistant", "content": "We decided to use docker compose instead. "
+                                             "Pending: rotate the staging token."},
         ]},
     ]
 

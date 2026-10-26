@@ -1,59 +1,53 @@
-# STATUS — 2026-10-26 (V11)
+# STATUS — 2026-10-26 (V11, final for this pass)
 
-## 开关一览
+## 开关
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `COMPACTION_PROXY_FOLDING` | `0` | 可逆折叠：归档原文 + 类型化占位符 + 承诺契约 + 证据探针 |
-| `COMPACTION_PROXY_CONTRACT_RETRY` | `1` | 证据分低于阈值时，带"MUST PRESERVE"清单重试一次 |
-| `COMPACTION_PROXY_EVIDENCE_FLOOR` | `0.75` | 证据分下限（契约 45% / 标识符 25% / 分节 15% / 末次请求 15%） |
+| `COMPACTION_PROXY_CONTRACT_RETRY` | `1` | 证据分低于阈值时带 MUST-PRESERVE 清单重试一次 |
+| `COMPACTION_PROXY_EVIDENCE_FLOOR` | `0.75` | 证据分下限 |
 | `COMPACTION_PROXY_POLICY` | `0` | UCB bandit 选择 light/standard/deep |
-| `COMPACTION_PROXY_AGENT_PROFILE` | 空 | `weak` / `strong` / `auto`：按模型能力调整预压缩阈值 |
-| `COMPACTION_PROXY_STRICT_SESSION` | `0` | 拒绝内容指纹 session id（返回 ephemeral） |
+| `COMPACTION_PROXY_AGENT_PROFILE` | 空 | `weak`/`strong`/`auto` 调整预压缩阈值 |
+| `COMPACTION_PROXY_STRICT_SESSION` | `0` | 拒绝内容指纹 session id |
+| `COMPACTION_PROXY_MAX_BODY_MB` | `2` | 请求体上限（超出 413） |
+| `COMPACTION_PROXY_RATE_LIMIT` | `0` | 每 IP 每分钟请求数（0 关闭） |
+| `COMPACTION_PROXY_REQUIRE_AUTH` | `0` | 无 API secret 时拒绝启动 |
+| `COMPACTION_PROXY_RETENTION_DAYS` | `30` | folds/state/sessions 保留天数 |
+| `COMPACTION_PROXY_MAX_FOLDS` / `MAX_SESSIONS` | `5000` / `2000` | 归档/会话条数上限 |
+| `COMPACTION_PROXY_MAINTENANCE_EVERY` | `100` | 每 N 次成功压缩跑一次保留清理 |
+| `COMPACTION_PROXY_FOLD_ENCRYPT` | `0` | 归档加密（Fernet，key 自动生成 0600） |
+| `COMPACTION_PROXY_CALIBRATION_DB` | 数据目录 | 每模型 token 校准持久化 |
 
 ## 已完成
 
-### P0 工程基线
-- `requirements.txt` / `requirements-optional.txt`
-- CI：`.github/workflows/ci.yml`（Python 3.11/3.12/3.13，compile + 53 项测试）
-- `tests/`：53 项 characterization 测试全绿
-- **死模块归档** → `attic/`：`memskill_rl`、`incremental_compaction`、`async_precompressor`、`storage_backend`、`rust_ffi`、`rust/`（此前 README/ROADMAP 标 ✅ 但主程序从未 import）
-- session id：header 优先；指纹兜底告警 + 指标；`STRICT_SESSION` 彻底拒绝；指纹加入 `user` 字段隔离
+### P0 稳定性 / 运维
+- **SessionStore 并发加固**：RLock + `busy_timeout=10000` + 连接超时；13 个公共方法统一加锁
+- **保留策略**：`fold_archive.prune`、`state_table.prune`、`session_store.prune`；每 100 次压缩自动执行；`POST /maintenance/prune` 手动触发
+- **安全**：`REQUIRE_AUTH` 无 secret 拒绝启动（fail-closed）；按 IP 限流；请求体上限；归档可选加密（ciphertext at rest 已实测）
+- **成本归因**：优先读取上游 `usage`（OpenAI/Anthropic/Gemini 三种字段），记录 prompt/completion tokens；无 usage 时回退估算
 
-### P1a 可逆折叠（`folding.py`）
-- `FoldArchive`：SQLite 原样归档，`fold:<hash>` 寻址
-- `build_fold_digest()`：零 LLM 的结构化摘要（角色/工具/文件/命令/错误/承诺）
-- `render_fold_block()`：`<folded_context ref=...>` 类型化占位符，不拍平消息结构
-- `/fold/{ref}` 原样取回；`/health` 暴露归档状态
+### P1 质量
+- **任务承诺**：`TODO / pending / next step / 待办 / 下一步` 纳入 commitment 与状态表
+- **token 校准**：按模型学习 `actual / estimated` 比率（EMA，clamp 0.5–2.0），用于预压缩阈值
+- **评测**：`benchmark/paired_eval.py` 三套 fixture（coding/data/ops），CI 自动跑；`compare_systems.py` 三方对比（OpenClaw/Hermes/NeverFull）
 
-### P1b 状态一致性（`state_table.py`）
-- 文件表：path → 最后操作/时间/编辑次数，标记"早期读取已过期"
-- 决策表：goal/constraint/decision，重复去重、近似旧决策标 `superseded`（ghost-memory 防护）
-- 每次压缩渲染 `<state_snapshot>` 注入上下文
+### P2 可观测 / 性能
+- `/metrics` 与 `/health` 增加延迟直方图（p50/p95/max）
+- `/fold/{ref}` 支持 `offset/limit` 分页（默认 200，上限 500）
+- 折叠/状态写入全部加锁；2000 条消息估算 60ms、submodular 选择 177ms（可接受）
 
-### P2 证据探针 + 契约重试（`evidence.py`）
-- 确定性探针：承诺覆盖 45%、精确标识符 25%、分节完整 15%、末次请求关键词 15%
-- 低于 `EVIDENCE_FLOOR`：带 `MUST PRESERVE VERBATIM` 清单重试一次，取更优结果
-- 未保留项用 `<unpreserved_commitments>` / `<evidence_report>` 显式披露
+## 验证
 
-### P3 配对评测（`benchmark/paired_eval.py`）
-- Compact-Bench 风格：full / truncate / summary / fold 四种视图，同一对话、同一探针
-- 指标：压缩率 + 证据保留率（不依赖 LLM reader）
-- 内置合成样例可直接跑；支持 `--data conversations.jsonl`、`--json`、`--markdown`
+- **64 项测试全绿**（含并发、保留、加密、校准、任务承诺）
+- 冒烟：`/health` 显示 encryption/retention；`/fold` 分页 `total=5 / offset=1 / limit=2`；`/maintenance/prune` 正常；`REQUIRE_AUTH=1` 无 secret 时进程退出码 1
+- 并发 8×25 次 fold/state/session 写入：**0 错误**
+- HTTP：100 次串行 health p50 1ms；200 并发 0.09s；畸形 JSON 400；1.5MB 413；上游宕机 502
 
-### P4 自适应策略（`policy.py`）
-- `classify_task()`：code / data / ops / prose
-- `ContextPolicy`：UCB1 bandit（light/standard/deep），持久化；证据分 EMA 低于下限时强制 `light`
-- 动作映射到 `keep_turns` 调整；奖励 = 证据分
+## 仍未做（下一轮）
 
-### P5 成本归因 + 能力档位
-- `record_compaction_cost()`：压缩调用成本（估算）vs 节省 tokens、延迟累计
-- `/health` 输出 `cost.net_saved_tokens`
-- `effective_threshold()`：weak 0.75 / strong 0.90 / auto 按窗口（≥200k→0.90，≥100k→0.85，否则 0.78）
-
-## 未完成 / 已知限制
-- `memskill_rl.py` 仍在 `attic/`：其 RL 脚手架未接线；P4 用可审计的 bandit 替代
-- 成本归因是估算值（上游 usage 未逐次解析进 `/metrics`）
-- 配对评测的"任务延续成功率"需要真实 LLM reader；当前只测证据可用性
-- README 的 "40+ techniques" 叙事仍是历史文本，待 P3 文档口径彻底重写
-- 线上 8199/8200 实例仍运行旧部署副本；本仓库未 push
+- 多实例共享存储（Redis/Postgres）仍在 `attic/`；当前单进程
+- 流式路径（Anthropic SSE × 压缩）缺集成测试
+- 成本归因是全局聚合，尚未按请求打标签；cache 命中未计入收益
+- 归档 key 轮换 / 多租户隔离未实现
+- README 的“40+ techniques”叙事仍待彻底重写（STATUS 已给出真实清单）

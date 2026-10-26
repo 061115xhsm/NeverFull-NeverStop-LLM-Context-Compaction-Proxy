@@ -90,9 +90,13 @@ def _approx_tokens(messages: list) -> int:
 class FoldArchive:
     """Verbatim, addressable store for folded history (SQLite, WAL)."""
 
-    def __init__(self, path: str | os.PathLike | None = None) -> None:
+    def __init__(self, path: str | os.PathLike | None = None, encrypt: bool = False,
+                 key_path: str | os.PathLike | None = None) -> None:
         self.path = Path(path or DEFAULT_DB).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._fernet = None
+        if encrypt:
+            self._init_encryption(key_path)
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=5)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -100,10 +104,35 @@ class FoldArchive:
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
+    def _init_encryption(self, key_path) -> None:
+        try:
+            from cryptography.fernet import Fernet
+        except Exception:
+            return  # optional dependency; stays plaintext with a warning at call site
+        kp = Path(key_path or (self.path.parent / "fold.key")).expanduser()
+        if kp.exists():
+            key = kp.read_bytes().strip()
+        else:
+            key = Fernet.generate_key()
+            kp.parent.mkdir(parents=True, exist_ok=True)
+            kp.write_bytes(key)
+            try:
+                os.chmod(kp, 0o600)
+            except OSError:
+                pass
+        self._fernet = Fernet(key)
+
+    @property
+    def encrypted(self) -> bool:
+        return self._fernet is not None
+
     def put(self, session_id: str, kind: str, messages: list, ref: Optional[str] = None) -> str:
         payload = json.dumps(messages, ensure_ascii=False)
+        if self._fernet is not None:
+            payload = "enc:v1:" + self._fernet.encrypt(payload.encode("utf-8")).decode("ascii")
         if ref is None:
-            ref = "fold:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+            raw = json.dumps(messages, ensure_ascii=False)
+            ref = "fold:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO folds(ref, session_id, created_at, kind, n_messages, approx_tokens, payload) "
@@ -128,8 +157,18 @@ class FoldArchive:
             "kind": row[3],
             "n_messages": row[4],
             "approx_tokens": row[5],
-            "messages": json.loads(row[6]),
+            "messages": self._decode(row[6]),
         }
+
+    def _decode(self, payload: str):
+        if isinstance(payload, str) and payload.startswith("enc:v1:"):
+            if self._fernet is None:
+                return []
+            try:
+                return json.loads(self._fernet.decrypt(payload[7:].encode("ascii")).decode("utf-8"))
+            except Exception:
+                return []
+        return json.loads(payload)
 
     def stats(self) -> dict:
         try:
@@ -139,6 +178,29 @@ class FoldArchive:
         except sqlite3.Error:
             return {"entries": 0, "tokens_archived": 0, "path": str(self.path)}
         return {"entries": n, "tokens_archived": tokens, "path": str(self.path)}
+
+    def prune(self, max_entries: int = 0, max_age_days: float = 30.0) -> int:
+        """Retention: drop old folds, then trim to max_entries (newest kept)."""
+        removed = 0
+        with self._lock:
+            if max_age_days and max_age_days > 0:
+                cutoff = time.time() - max_age_days * 86400
+                cur = self._conn.execute("DELETE FROM folds WHERE created_at < ?", (cutoff,))
+                removed += cur.rowcount or 0
+            if max_entries and max_entries > 0:
+                cur = self._conn.execute(
+                    "DELETE FROM folds WHERE ref IN ("
+                    " SELECT ref FROM folds ORDER BY created_at DESC LIMIT -1 OFFSET ?)",
+                    (max_entries,),
+                )
+                removed += cur.rowcount or 0
+            self._conn.commit()
+            if removed:
+                try:
+                    self._conn.execute("VACUUM")
+                except sqlite3.Error:
+                    pass
+        return removed
 
     def close(self) -> None:
         try:

@@ -92,6 +92,7 @@ V4 基于 2025-2026 前沿论文研究升级，新增 10 项技术:
 
 import ast
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
@@ -106,7 +107,7 @@ import threading
 import unicodedata
 import uuid
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -207,6 +208,13 @@ except Exception:
     classify_task = lambda messages: "prose"
     effective_threshold = lambda model="", profile="", window=None: -1.0
     ENH_POLICY = False
+
+try:
+    from calibration import TokenCalibrator
+    ENH_CALIBRATION = True
+except Exception:
+    TokenCalibrator = None
+    ENH_CALIBRATION = False
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
@@ -331,6 +339,16 @@ FOLD_ARCHIVE_PATH = os.environ.get(
 )
 # Strict session mode: never derive a session id from message content.
 STRICT_SESSION = os.environ.get("COMPACTION_PROXY_STRICT_SESSION", "0") == "1"
+
+# V11 ops: request limits, rate limiting, retention, archive encryption
+MAX_BODY_MB = int(os.environ.get("COMPACTION_PROXY_MAX_BODY_MB", "2"))
+RATE_LIMIT = int(os.environ.get("COMPACTION_PROXY_RATE_LIMIT", "0"))
+REQUIRE_AUTH = os.environ.get("COMPACTION_PROXY_REQUIRE_AUTH", "0") == "1"
+RETENTION_DAYS = float(os.environ.get("COMPACTION_PROXY_RETENTION_DAYS", "30"))
+MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_MAX_FOLDS", "5000"))
+MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_MAX_SESSIONS", "2000"))
+MAINTENANCE_EVERY = int(os.environ.get("COMPACTION_PROXY_MAINTENANCE_EVERY", "100"))
+FOLD_ENCRYPT = os.environ.get("COMPACTION_PROXY_FOLD_ENCRYPT", "0") == "1"
 
 # V11 P2/P4/P5: evidence floor, contract retry, learned policy, capability profile
 EVIDENCE_FLOOR = float(os.environ.get("COMPACTION_PROXY_EVIDENCE_FLOOR", "0.75"))
@@ -927,6 +945,7 @@ predictive_precompressor = PredictivePrecompressor(threshold=0.75) if ENH_CACHE 
 class Metrics:
     def __init__(self):
         self.counters = defaultdict(int)
+        self.histograms = defaultdict(lambda: deque(maxlen=2048))
         self.start_time = time.time()
 
     def inc(self, name: str, delta: int = 1):
@@ -935,21 +954,39 @@ class Metrics:
     def get(self, name: str) -> int:
         return self.counters.get(name, 0)
 
+    def observe(self, name: str, value: float):
+        try:
+            self.histograms[name].append(float(value))
+        except (TypeError, ValueError):
+            pass
+
+    def percentiles(self, name: str) -> dict:
+        vals = sorted(self.histograms.get(name, ()))
+        if not vals:
+            return {"count": 0}
+        def q(p):
+            return vals[min(len(vals) - 1, int(p * len(vals)))]
+        return {"count": len(vals), "p50": round(q(0.50), 2),
+                "p95": round(q(0.95), 2), "max": round(vals[-1], 2)}
+
     def snapshot(self) -> dict:
         uptime = time.time() - self.start_time
         return {
             "uptime_seconds": round(uptime, 1),
             "counters": dict(self.counters),
+            "percentiles": {k: self.percentiles(k) for k in list(self.histograms)[:20]},
         }
 
 
 metrics = Metrics()
+token_calibrator = TokenCalibrator() if (ENH_CALIBRATION and TokenCalibrator is not None) else None
+COMPACTION_USAGE = contextvars.ContextVar("compaction_usage", default=None)
 
 # ── V8: 语义保真度增强组件(可选) ────────────────────────────────────
 SEMANTIC_FIDELITY_FLOOR = float(os.environ.get("COMPACTION_PROXY_FIDELITY_FLOOR", "0.92"))
 semantic_fidelity_scorer = FidelityScorer() if ENH_FIDELITY and FidelityScorer is not None else None
 quality_breaker = QualityBreaker(failure_threshold=3, cooldown_seconds=60) if ENH_FIDELITY and QualityBreaker is not None else None
-fold_archive = FoldArchive(FOLD_ARCHIVE_PATH) if (ENH_FOLDING and FOLDING_ENABLED and FoldArchive is not None) else None
+fold_archive = FoldArchive(FOLD_ARCHIVE_PATH, encrypt=FOLD_ENCRYPT) if (ENH_FOLDING and FOLDING_ENABLED and FoldArchive is not None) else None
 
 # V11 P1b/P4: state table + adaptive policy (only instantiated when needed)
 state_table = StateTable(STATE_DB_PATH) if (ENH_STATE and (FOLDING_ENABLED or POLICY_ENABLED)) else None
@@ -957,15 +994,24 @@ context_policy = ContextPolicy(floor=EVIDENCE_FLOOR) if (ENH_POLICY and POLICY_E
 
 
 def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float) -> None:
-    """Cost attribution (V11 P5): compaction call cost vs tokens saved."""
+    """Cost attribution (V11 P5): measured usage when available, estimate otherwise."""
+    usage = COMPACTION_USAGE.get()
     before_t = estimate_tokens_accurate(before_msgs)
     summary_t = max(1, len(summary or "") // 4)
-    call_tokens = before_t + 2000  # prompt + max output of the compaction model (estimate)
+    if isinstance(usage, dict) and (usage.get("prompt") or usage.get("completion")):
+        prompt_t = int(usage.get("prompt", 0))
+        completion_t = int(usage.get("completion", 0))
+        call_tokens = prompt_t + completion_t
+        metrics.inc("compaction_prompt_tokens_total", prompt_t)
+        metrics.inc("compaction_completion_tokens_total", completion_t)
+    else:
+        call_tokens = before_t + 2000  # estimate when the provider reports no usage
     saved = max(0, before_t - summary_t)
     metrics.inc("compaction_calls")
     metrics.inc("compaction_cost_tokens_total", call_tokens)
     metrics.inc("compaction_saved_tokens_total", saved)
     metrics.inc("compaction_latency_ms_total", int(latency_ms))
+    metrics.observe("compaction_latency_ms", latency_ms)
 
 # ── V4: Episodic-Semantic Dual-Layer Memory ──────────────────────────
 
@@ -1617,6 +1663,15 @@ compression_engine = None
 
 # ── V5: Cross-Session Memory + FTS5 Search ──────────────────────────────
 
+def _db_locked(fn):
+    """Serialize access to the shared SessionStore connection."""
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    wrapper.__name__ = getattr(fn, "__name__", "wrapped")
+    return wrapper
+
+
 class SessionStore:
     """
     V5: Cross-Session Memory with FTS5 full-text search.
@@ -1627,14 +1682,16 @@ class SessionStore:
         self._db_path = db_path or SESSION_DB_PATH
         self._conn = None
         self._write_lock = threading.Lock()
+        self._lock = threading.RLock()
         self._init_db()
 
     def _init_db(self):
         """Initialize SQLite database with FTS5"""
         os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
-        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        self._conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=10)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=10000")
         # Sessions table
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
@@ -1748,6 +1805,7 @@ class SessionStore:
 
         self._conn.commit()
 
+    @_db_locked
     def save_session(self, session_id, summary, semantic_memory_data, msg_count):
         """Save/update a session record"""
         with self._write_lock:
@@ -1764,6 +1822,7 @@ class SessionStore:
             """, (session_id, summary, sem_json, msg_count, now, now))
             self._conn.commit()
 
+    @_db_locked
     def search_sessions(self, query, limit=5):
         """FTS5 full-text search across session summaries"""
         try:
@@ -1788,6 +1847,7 @@ class SessionStore:
             logger.warning(f"FTS5 search error: {e}")
             return []
 
+    @_db_locked
     def get_recent_sessions(self, n=5):
         """Get N most recently updated sessions"""
         cursor = self._conn.execute("""
@@ -1804,6 +1864,7 @@ class SessionStore:
             })
         return results
 
+    @_db_locked
     def get_session(self, session_id):
         """Get a single session by ID"""
         cursor = self._conn.execute("""
@@ -1828,6 +1889,7 @@ class SessionStore:
             "updated_at": row[5],
         }
 
+    @_db_locked
     def get_prior_summary(self, session_id):
         """Get per-session prior summary (replaces global _prior_summary)"""
         cursor = self._conn.execute(
@@ -1839,6 +1901,7 @@ class SessionStore:
             return row[0], row[1]  # (summary, msg_count)
         return None, 0
 
+    @_db_locked
     def save_prior_summary(self, session_id, summary, msg_count):
         """Save per-session prior summary"""
         with self._write_lock:
@@ -1853,6 +1916,7 @@ class SessionStore:
             """, (session_id, summary, msg_count, now))
             self._conn.commit()
 
+    @_db_locked
     def get_background_knowledge(self, n=3):
         """Get recent session summaries as background knowledge for new sessions"""
         cursor = self._conn.execute("""
@@ -1863,6 +1927,7 @@ class SessionStore:
         summaries = [row[0] for row in cursor if row[0]]
         return summaries
 
+    @_db_locked
     def save_transcript(self, session_id: str, messages: list):
         """V5: Save full conversation transcript for session resume"""
         transcript_json = json.dumps(messages, ensure_ascii=False)
@@ -1873,6 +1938,7 @@ class SessionStore:
             )
             self._conn.commit()
 
+    @_db_locked
     def get_transcript(self, session_id: str) -> Optional[list]:
         """V5: Load full conversation transcript for session resume"""
         cursor = self._conn.execute(
@@ -1887,6 +1953,7 @@ class SessionStore:
                 return None
         return None
 
+    @_db_locked
     def save_arc_entry(self, arc_id, content, source_idx=-1):
         """Persist ARC log entry to SQLite"""
         with self._write_lock:
@@ -1897,6 +1964,7 @@ class SessionStore:
             """, (arc_id, content, source_idx, now, len(content)))
             self._conn.commit()
 
+    @_db_locked
     def load_arc_entries(self):
         """Load all ARC entries from SQLite (for startup recovery)"""
         cursor = self._conn.execute("SELECT arc_id, content, source_idx, stored_at, size FROM arc_entries")
@@ -1911,10 +1979,35 @@ class SessionStore:
         return entries
 
     @property
+    @_db_locked
     def session_count(self):
         cursor = self._conn.execute("SELECT COUNT(*) FROM sessions")
         return cursor.fetchone()[0]
 
+    @_db_locked
+    def prune(self, max_age_days: float = 90.0, max_sessions: int = 2000) -> int:
+        """Retention: drop old sessions, trim to max_sessions, orphan summaries."""
+        removed = 0
+        cutoff = time.time() - max_age_days * 86400
+        cur = self._conn.execute("DELETE FROM sessions WHERE COALESCE(created_at,0) < ?", (cutoff,))
+        removed += cur.rowcount or 0
+        cur = self._conn.execute(
+            "DELETE FROM sessions WHERE session_id NOT IN ("
+            " SELECT session_id FROM sessions ORDER BY COALESCE(created_at,0) DESC LIMIT ?)",
+            (max_sessions,),
+        )
+        removed += cur.rowcount or 0
+        self._conn.execute("DELETE FROM prior_summaries WHERE session_id NOT IN (SELECT session_id FROM sessions)")
+        self._conn.execute("DELETE FROM trajectories WHERE timestamp < ?", (cutoff,))
+        self._conn.commit()
+        if removed:
+            try:
+                self._conn.execute("VACUUM")
+            except sqlite3.Error:
+                pass
+        return removed
+
+    @_db_locked
     def close(self):
         with self._write_lock:
             if self._conn:
@@ -3634,6 +3727,10 @@ COMMITMENT_TYPES = {
         r'(?:created|modified|deleted|renamed|创建|修改|删除|重命名|wrote|read|编辑)\s+(.{5,200})',
         re.IGNORECASE
     ),
+    "task": re.compile(
+        r'(?:todo|pending|next\s+step|待办|下一步|还需要|remaining)\s*[:：]?\s*(.{5,200})',
+        re.IGNORECASE
+    ),
 }
 
 
@@ -4809,6 +4906,23 @@ async def compact_messages(
             result = await resp.read()
             data = json.loads(result)
 
+            # V11: capture provider-reported usage for cost attribution + calibration
+            try:
+                usage = data.get("usage") or data.get("usageMetadata") or {}
+                if isinstance(usage, dict):
+                    pt = usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("promptTokenCount") or 0
+                    ct = usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("candidatesTokenCount") or 0
+                    if pt or ct:
+                        COMPACTION_USAGE.set({"prompt": int(pt), "completion": int(ct), "model": COMPACTION_MODEL})
+                        if token_calibrator is not None:
+                            token_calibrator.observe(
+                                COMPACTION_MODEL,
+                                estimate_tokens_accurate(payload.get("messages", [])),
+                                int(pt),
+                            )
+            except Exception:
+                pass
+
             # V6: Provider-aware content extraction
             content = compaction_provider.extract_compaction_content(data)
 
@@ -5788,13 +5902,15 @@ def should_compact_preemptively(body: dict) -> bool:
         # Clearly won't overflow, skip
         return False
 
-    # Stage 2: Accurate estimation (near threshold)
+    # Stage 2: Accurate estimation (near threshold), calibrated per model
     accurate_est = estimate_tokens_accurate(messages)
+    if token_calibrator is not None:
+        accurate_est = token_calibrator.apply(model, accurate_est)
 
     if accurate_est > threshold:
         logger.info(
             f"Preemptive compaction: estimated {accurate_est} tokens > "
-            f"{PREEMPTIVE_THRESHOLD*100:.0f}% of {usable_limit} (threshold={threshold}) "
+            f"{threshold_pct*100:.0f}% of {usable_limit} (threshold={threshold}) "
             f"for model={model} (fast_est={fast_est})"
         )
         return True
@@ -6180,6 +6296,8 @@ async def do_compaction(
             f"{len(recent_msgs)} recent = {new_msg_count} total"
         )
         metrics.inc("compaction_attempt_success")
+        if MAINTENANCE_EVERY > 0 and metrics.get("compaction_attempt_success") % MAINTENANCE_EVERY == 0:
+            run_maintenance()
 
         # Preflight safety verification (V5 FIX: use saved original_messages, not body which is already compacted)
         if not verify_compaction_safety(
@@ -6775,7 +6893,46 @@ async def handle_fold_retrieve(request: web.Request) -> web.Response:
     item = fold_archive.get(ref)
     if item is None:
         return web.json_response({"error": f"fold ref {ref} not found"}, status=404)
+    msgs = item.get("messages") or []
+    try:
+        offset = max(0, int(request.query.get("offset", 0) or 0))
+        limit = min(500, max(1, int(request.query.get("limit", 200) or 200)))
+    except ValueError:
+        offset, limit = 0, 200
+    total = len(msgs)
+    item["messages"] = msgs[offset:offset + limit]
+    item.update({"offset": offset, "limit": limit, "total": total})
     return web.json_response(item)
+
+
+@require_auth
+async def handle_maintenance_prune(request: web.Request) -> web.Response:
+    """V11 ops: run retention on folds/state/sessions."""
+    removed = {}
+    try:
+        if fold_archive is not None:
+            removed["folds"] = fold_archive.prune(max_entries=MAX_FOLDS, max_age_days=RETENTION_DAYS)
+        if state_table is not None:
+            removed["state"] = state_table.prune(max_age_days=RETENTION_DAYS)
+        if session_store is not None:
+            removed["sessions"] = session_store.prune(
+                max_age_days=max(90.0, RETENTION_DAYS), max_sessions=MAX_SESSIONS
+            )
+    except Exception as e:
+        return web.json_response({"error": str(e), "removed": removed}, status=500)
+    return web.json_response({"removed": removed})
+
+
+def run_maintenance() -> None:
+    try:
+        if fold_archive is not None:
+            fold_archive.prune(max_entries=MAX_FOLDS, max_age_days=RETENTION_DAYS)
+        if state_table is not None:
+            state_table.prune(max_age_days=RETENTION_DAYS)
+        if session_store is not None:
+            session_store.prune(max_age_days=max(90.0, RETENTION_DAYS), max_sessions=MAX_SESSIONS)
+    except Exception as e:
+        logger.warning("Maintenance failed (non-fatal): %s", e)
 
 
 # ── 主处理函数 ──────────────────────────────────────────────────────────
@@ -7128,6 +7285,18 @@ async def handle_health(request: web.Request) -> web.Response:
                 - metrics.get("compaction_cost_tokens_total")
             ),
             "latency_ms_total": metrics.get("compaction_latency_ms_total"),
+        },
+        "retention": {
+            "days": RETENTION_DAYS,
+            "max_folds": MAX_FOLDS,
+            "max_sessions": MAX_SESSIONS,
+            "maintenance_every": MAINTENANCE_EVERY,
+        },
+        "security": {
+            "require_auth": REQUIRE_AUTH,
+            "rate_limit_per_min": RATE_LIMIT,
+            "max_body_mb": MAX_BODY_MB,
+            "fold_encrypted": bool(fold_archive.encrypted) if fold_archive else False,
         },
         "compaction_model": COMPACTION_MODEL,
         "keep_recent_turns": KEEP_RECENT_TURNS,
@@ -7743,7 +7912,31 @@ async def handle_skills_designer_trigger(request: web.Request) -> web.Response:
 
 START_TIME = time.time()
 
-app = web.Application()
+_RATE_STATE: dict = {}
+
+
+def _rate_limit_middleware():
+    @web.middleware
+    async def middleware(request, handler):
+        if RATE_LIMIT > 0:
+            ip = request.remote or "unknown"
+            now = time.time()
+            tokens, last = _RATE_STATE.get(ip, (float(RATE_LIMIT), now))
+            tokens = min(float(RATE_LIMIT), tokens + (now - last) * RATE_LIMIT / 60.0)
+            if tokens < 1.0:
+                return web.json_response({"error": "rate limit exceeded"}, status=429)
+            _RATE_STATE[ip] = (tokens - 1.0, now)
+        return await handler(request)
+    return middleware
+
+
+app = web.Application(
+    client_max_size=MAX_BODY_MB * 1024 * 1024,
+    middlewares=[_rate_limit_middleware()],
+)
+if REQUIRE_AUTH and not API_SECRET:
+    logger.error("COMPACTION_PROXY_REQUIRE_AUTH=1 requires COMPACTION_PROXY_API_SECRET; refusing to start")
+    raise SystemExit(1)
 
 # 核心路由
 app.router.add_post("/chat/completions", handle_chat_completions)
@@ -7758,6 +7951,7 @@ app.router.add_post("/v1/messages/", handle_anthropic_messages)
 # V3: ARC 回查端点
 app.router.add_get("/arc/{arc_id}", handle_arc_retrieve)
 app.router.add_get("/fold/{ref}", handle_fold_retrieve)
+app.router.add_post("/maintenance/prune", handle_maintenance_prune)
 
 # V5: Session & Profile endpoints
 app.router.add_post("/session", handle_session_create)
