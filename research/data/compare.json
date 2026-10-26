@@ -1,0 +1,119 @@
+{
+  "transcript_tokens": 9087,
+  "results": [
+    {
+      "name": "openclaw",
+      "compression": 0.491,
+      "tokens_before": 9087,
+      "tokens_after": 4622,
+      "evidence_recall": 0.636,
+      "stale_score": 0.5,
+      "latency_s": 18.27,
+      "cost_tokens": 8934,
+      "qa_score": 0.75,
+      "qa": [
+        {
+          "q": "Which storage did we decide to use for the session cache?",
+          "expected": "sqlite",
+          "answer": "sqlite",
+          "ok": true
+        },
+        {
+          "q": "Which path prefix must never change?",
+          "expected": "/api/v1",
+          "answer": "/api/v1",
+          "ok": true
+        },
+        {
+          "q": "Which command reproduces the failing offline test?",
+          "expected": "pytest",
+          "answer": "",
+          "ok": false
+        },
+        {
+          "q": "What is the pending task?",
+          "expected": "migrate config.yaml",
+          "answer": "migrate `config.yaml` to the new schema after tests pass",
+          "ok": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "hermes",
+      "compression": 0.471,
+      "tokens_before": 9087,
+      "tokens_after": 4803,
+      "evidence_recall": 0.636,
+      "stale_score": 1.0,
+      "latency_s": 67.66,
+      "cost_tokens": 11410,
+      "qa_score": 0.75,
+      "qa": [
+        {
+          "q": "Which storage did we decide to use for the session cache?",
+          "expected": "sqlite",
+          "answer": "sqlite",
+          "ok": true
+        },
+        {
+          "q": "Which path prefix must never change?",
+          "expected": "/api/v1",
+          "answer": "/api/v1",
+          "ok": true
+        },
+        {
+          "q": "Which command reproduces the failing offline test?",
+          "expected": "pytest",
+          "answer": "Not specified in the context.",
+          "ok": false
+        },
+        {
+          "q": "What is the pending task?",
+          "expected": "migrate config.yaml",
+          "answer": "migrate config.yaml to the new schema after tests pass",
+          "ok": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "name": "neverfull",
+      "compression": 0.86,
+      "tokens_before": 9087,
+      "tokens_after": 1271,
+      "evidence_recall": 1.0,
+      "stale_score": 1.0,
+      "latency_s": 25.47,
+      "cost_tokens": 9369,
+      "qa_score": 1.0,
+      "qa": [
+        {
+          "q": "Which storage did we decide to use for the session cache?",
+          "expected": "sqlite",
+          "answer": "sqlite",
+          "ok": true
+        },
+        {
+          "q": "Which path prefix must never change?",
+          "expected": "/api/v1",
+          "answer": "/api/v1",
+          "ok": true
+        },
+        {
+          "q": "Which command reproduces the failing offline test?",
+          "expected": "pytest",
+          "answer": "pytest -q",
+          "ok": true
+        },
+        {
+          "q": "What is the pending task?",
+          "expected": "migrate config.yaml",
+          "answer": "migrate config.yaml to the new schema",
+          "ok": true
+        }
+      ],
+      "error": null
+    }
+  ]
+}
