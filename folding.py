@@ -135,7 +135,7 @@ class FoldArchive:
         return self._fernet is not None
 
     def put(self, session_id: str, kind: str, messages: list, ref: Optional[str] = None,
-            tenant_id: Optional[str] = None) -> str:
+            tenant_id: Optional[str] = None, max_per_tenant: int = 0) -> str:
         payload = json.dumps(messages, ensure_ascii=False)
         if self._fernet is not None:
             payload = "enc:v1:" + self._fernet.encrypt(payload.encode("utf-8")).decode("ascii")
@@ -158,6 +158,12 @@ class FoldArchive:
                 "VALUES (?,?,?,?,?,?,?,?)",
                 (ref, tenant, session_id, time.time(), kind, len(messages), _approx_tokens(messages), payload),
             )
+            if max_per_tenant and max_per_tenant > 0:
+                self._conn.execute(
+                    "DELETE FROM folds WHERE tenant_id=? AND ref NOT IN ("
+                    " SELECT ref FROM folds WHERE tenant_id=? ORDER BY created_at DESC LIMIT ?)",
+                    (tenant, tenant, max_per_tenant),
+                )
             self._conn.commit()
         return ref
 

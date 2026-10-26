@@ -62,3 +62,35 @@ class CostTracker:
             "by_tenant": by_tenant,
             "last": events[-1],
         }
+
+
+class DailyQuota:
+    """Per-tenant daily token budget (in-memory; resets on restart)."""
+
+    def __init__(self, limit: int = 0) -> None:
+        self.limit = max(0, int(limit))
+        self._data: dict = {}
+        self._lock = threading.Lock()
+
+    def _day(self) -> str:
+        return time.strftime("%Y-%m-%d")
+
+    def add(self, tenant: str, tokens: int) -> None:
+        if self.limit <= 0:
+            return
+        with self._lock:
+            key = (tenant or "default", self._day())
+            self._data[key] = self._data.get(key, 0) + int(tokens)
+
+    def used(self, tenant: str) -> int:
+        with self._lock:
+            return self._data.get((tenant or "default", self._day()), 0)
+
+    def exceeded(self, tenant: str) -> bool:
+        return self.limit > 0 and self.used(tenant) >= self.limit
+
+    def stats(self) -> dict:
+        with self._lock:
+            today = self._day()
+            return {"limit": self.limit,
+                    "today": {t: v for (t, d), v in self._data.items() if d == today}}

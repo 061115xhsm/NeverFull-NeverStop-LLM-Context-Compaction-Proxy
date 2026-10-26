@@ -50,13 +50,15 @@
 - `COMPACTION_PROXY_REDIS_URL` 共享压缩缓存（Redis SETEX；无 Redis 时本地）
 - `COMPACTION_PROXY_INSTANCE_ID` + `X-Instance-Id` 响应头；`/health.storage` 暴露模式
 - `COMPACTION_PROXY_MAINTENANCE_OWNER=0` 让从实例跳过定期清理
-- `storage_backend.py` 移到根目录（SQLite/Postgres/Redis 适配器）；Postgres/Redis 需可选依赖，尚未接入 SessionStore
+- `storage_backend.py` 移到根目录；`session_store_pg.py` 实现完整 PostgreSQL SessionStore（sessions/prior/transcripts/ARC/搜索），`COMPACTION_PROXY_STORAGE=postgres` + `PG_DSN` 启用，CI 带 Postgres 服务
+- 租户配额：`TENANT_MAX_FOLDS` / `_MAX_SESSIONS`（写入时裁剪）、`TENANT_DAILY_TOKENS` + `ENFORCE_QUOTA`（超限跳过压缩）
+- 密钥轮换端点：`POST /maintenance/rotate-key`（实测轮换后数据可读）
 - 流式集成测试 + 归档密钥轮换 + 按请求成本追踪
 
 ## 仍未做（下一轮）
 
 - 多实例共享存储（Redis/Postgres）仍在 `attic/`；当前单进程
 - 流式路径（Anthropic SSE × 压缩）缺集成测试
-- 成本归因是全局聚合，尚未按请求打标签；cache 命中未计入收益
+- 成本归因含按事件明细（cost_recent）与按租户聚合；cache 命中已计入收益
 - 归档 key 轮换 / 多租户隔离未实现
 - README 的“40+ techniques”叙事仍待彻底重写（STATUS 已给出真实清单）

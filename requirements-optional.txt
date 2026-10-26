@@ -2,3 +2,5 @@
 # Without this, folding.py still works; fidelity.py falls back to n-gram Jaccard.
 # Install with:  pip install -r requirements-optional.txt
 sentence-transformers>=2.7
+psycopg2-binary>=2.9
+redis>=5

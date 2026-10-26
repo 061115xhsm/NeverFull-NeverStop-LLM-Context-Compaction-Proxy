@@ -20,7 +20,9 @@ Consequences: a second instance would have its own caches and could re-compact h
 | Instance identity | `COMPACTION_PROXY_INSTANCE_ID` (default hostname); `X-Instance-Id` on every response; `/health.storage` reports it |
 | Shared compaction cache | `COMPACTION_PROXY_REDIS_URL` → Redis `SETEX`; otherwise process-local; keys include tenant + history hash |
 | Maintenance owner | `COMPACTION_PROXY_MAINTENANCE_OWNER=0` disables the periodic prune on secondary instances |
-| Storage adapters | `storage_backend.py` (moved out of `attic/`) ships SQLite/Postgres/Redis backends; Postgres/Redis paths need `psycopg2`/`redis` installed and are not yet wired into `SessionStore` |
+| Storage adapters | `storage_backend.py` (SQLite/Postgres/Redis) is at the repo root; `session_store_pg.py` adds a full PostgreSQL `SessionStore` (sessions, prior summaries, transcripts, ARC, search) — set `COMPACTION_PROXY_STORAGE=postgres` + `COMPACTION_PROXY_PG_DSN` to use it |
+| Per-tenant quotas | `COMPACTION_PROXY_TENANT_MAX_FOLDS` / `_MAX_SESSIONS` / `_DAILY_TOKENS` + `COMPACTION_PROXY_ENFORCE_QUOTA=1` (exceeded → compaction skipped, logged) |
+| Key rotation | `POST /maintenance/rotate-key` re-encrypts the whole fold archive under a fresh key |
 | Session stickiness | Response echoes `X-Session-Id`; configure your load balancer to hash on it |
 
 Still required for true multi-host operation: wire `SessionStore` (including FTS transcripts) to PostgreSQL, share the encryption key, and move compaction cache/metrics to the shared services above.

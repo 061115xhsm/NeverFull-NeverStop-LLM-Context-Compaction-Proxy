@@ -218,10 +218,11 @@ except Exception:
     ENH_CALIBRATION = False
 
 try:
-    from cost_tracker import CostTracker
+    from cost_tracker import CostTracker, DailyQuota
     ENH_COST = True
 except Exception:
     CostTracker = None
+    DailyQuota = None
     ENH_COST = False
 
 try:
@@ -240,6 +241,13 @@ try:
 except Exception:
     SharedCache = None
     ENH_SHARED_CACHE = False
+
+try:
+    from session_store_pg import PostgresSessionStore
+    ENH_PG_STORE = True
+except Exception:
+    PostgresSessionStore = None
+    ENH_PG_STORE = False
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
@@ -380,6 +388,11 @@ INSTANCE_ID = os.environ.get("COMPACTION_PROXY_INSTANCE_ID") or socket.gethostna
 MAINTENANCE_OWNER = os.environ.get("COMPACTION_PROXY_MAINTENANCE_OWNER", "1") == "1"
 REDIS_URL = os.environ.get("COMPACTION_PROXY_REDIS_URL", "")
 SHARED_STORAGE = os.environ.get("COMPACTION_PROXY_STORAGE", "sqlite")
+PG_DSN = os.environ.get("COMPACTION_PROXY_PG_DSN", "")
+TENANT_MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_FOLDS", "0"))
+TENANT_MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_SESSIONS", "0"))
+TENANT_DAILY_TOKENS = int(os.environ.get("COMPACTION_PROXY_TENANT_DAILY_TOKENS", "0"))
+ENFORCE_QUOTA = os.environ.get("COMPACTION_PROXY_ENFORCE_QUOTA", "0") == "1"
 
 # V11 P2/P4/P5: evidence floor, contract retry, learned policy, capability profile
 EVIDENCE_FLOOR = float(os.environ.get("COMPACTION_PROXY_EVIDENCE_FLOOR", "0.75"))
@@ -1013,6 +1026,7 @@ metrics = Metrics()
 token_calibrator = TokenCalibrator() if (ENH_CALIBRATION and TokenCalibrator is not None) else None
 cost_tracker = CostTracker() if (ENH_COST and CostTracker is not None) else None
 shared_cache = SharedCache(REDIS_URL) if (ENH_SHARED_CACHE and SharedCache is not None) else None
+tenant_quota = DailyQuota(TENANT_DAILY_TOKENS) if (ENH_COST and DailyQuota is not None and TENANT_DAILY_TOKENS > 0) else None
 COMPACTION_USAGE = contextvars.ContextVar("compaction_usage", default=None)
 
 # ── V8: 语义保真度增强组件(可选) ────────────────────────────────────
@@ -1033,6 +1047,8 @@ def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float,
     usage = COMPACTION_USAGE.get()
     before_t = estimate_tokens_accurate(before_msgs)
     summary_t = max(1, len(summary or "") // 4)
+    if tenant_quota is not None:
+        tenant_quota.add(current_tenant(), call_tokens)
     if isinstance(usage, dict) and (usage.get("prompt") or usage.get("completion")):
         prompt_t = int(usage.get("prompt", 0))
         completion_t = int(usage.get("completion", 0))
@@ -6058,6 +6074,12 @@ async def do_compaction(
     messages = body.get("messages", [])
     original_model = body.get("model", "?")
 
+    # V11 P6: per-tenant daily token quota (enforced only when ENFORCE_QUOTA=1)
+    if ENH_TENANT and tenant_quota is not None and ENFORCE_QUOTA and tenant_quota.exceeded(current_tenant()):
+        metrics.inc("quota_compaction_skipped")
+        logger.warning("Tenant %s exceeded its daily token quota; skipping compaction", current_tenant())
+        return None
+
     # V7: MemSkill Step 0 — Build CompactionContext and select skills
     selected_skills = None
     if MEMSKILL_ENABLED and skill_registry and skill_controller:
@@ -6319,7 +6341,8 @@ async def do_compaction(
                     summary = summary + "\n\n" + probes["note"]
 
                 ref = fold_archive.put(session_id, "compaction", old_msgs,
-                                   tenant_id=current_tenant() if ENH_TENANT else "default")
+                                   tenant_id=current_tenant() if ENH_TENANT else "default",
+                                   max_per_tenant=TENANT_MAX_FOLDS)
                 digest = build_fold_digest(old_msgs, commitments=commitments)
                 summary = (
                     (state_snapshot + "\n\n") if state_snapshot else ""
@@ -6970,6 +6993,17 @@ async def handle_fold_retrieve(request: web.Request) -> web.Response:
 
 
 @require_auth
+async def handle_maintenance_rotate_key(request: web.Request) -> web.Response:
+    """V11 P6: rotate the fold archive encryption key."""
+    if not (FOLDING_ENABLED and ENH_FOLDING and fold_archive is not None):
+        return web.json_response({"error": "folding is disabled"}, status=404)
+    if not getattr(fold_archive, "encrypted", False):
+        return web.json_response({"error": "archive encryption is not enabled"}, status=400)
+    rotated = fold_archive.rotate_key()
+    return web.json_response({"rotated": rotated, "ts": time.time()})
+
+
+@require_auth
 async def handle_maintenance_prune(request: web.Request) -> web.Response:
     """V11 ops: run retention on folds/state/sessions."""
     removed = {}
@@ -7361,6 +7395,13 @@ async def handle_health(request: web.Request) -> web.Response:
             "rate_limit_per_min": RATE_LIMIT,
             "max_body_mb": MAX_BODY_MB,
             "fold_encrypted": bool(fold_archive.encrypted) if fold_archive else False,
+        },
+        "quotas": {
+            "daily_token_limit": TENANT_DAILY_TOKENS,
+            "used_today": tenant_quota.used(current_tenant()) if tenant_quota else 0,
+            "enforce": ENFORCE_QUOTA,
+            "tenant_max_folds": TENANT_MAX_FOLDS,
+            "tenant_max_sessions": TENANT_MAX_SESSIONS,
         },
         "cost_recent": cost_tracker.summary() if cost_tracker else {"events": 0},
         "instance_id": INSTANCE_ID,
@@ -8043,6 +8084,7 @@ app.router.add_post("/v1/messages/", handle_anthropic_messages)
 app.router.add_get("/arc/{arc_id}", handle_arc_retrieve)
 app.router.add_get("/fold/{ref}", handle_fold_retrieve)
 app.router.add_post("/maintenance/prune", handle_maintenance_prune)
+app.router.add_post("/maintenance/rotate-key", handle_maintenance_rotate_key)
 
 # V5: Session & Profile endpoints
 app.router.add_post("/session", handle_session_create)
@@ -8102,7 +8144,19 @@ def main():
     global skill_registry, skill_controller
 
     # V5: Initialize new components
-    session_store = SessionStore()
+    if SHARED_STORAGE == "postgres" and PG_DSN:
+        if ENH_PG_STORE and PostgresSessionStore is not None:
+            try:
+                session_store = PostgresSessionStore(PG_DSN, tenant_max_sessions=TENANT_MAX_SESSIONS)
+                logger.info("SessionStore: PostgreSQL shared storage enabled (%d max sessions/tenant)", TENANT_MAX_SESSIONS)
+            except Exception as e:
+                logger.warning(f"PostgreSQL session store unavailable ({e}); falling back to SQLite")
+                session_store = SessionStore()
+        else:
+            logger.warning("COMPACTION_PROXY_STORAGE=postgres requires psycopg2-binary; falling back to SQLite")
+            session_store = SessionStore()
+    else:
+        session_store = SessionStore()
     user_profile = UserProfile()
     hook_manager = HookManager()
     compression_engine = load_compression_engine()
