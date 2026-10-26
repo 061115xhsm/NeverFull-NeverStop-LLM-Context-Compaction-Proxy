@@ -184,6 +184,30 @@ except Exception:
     SUMMARY_SECTION_PROMPT = ""
     ENH_FOLDING = False
 
+# ── V11 P1b/P2/P4: state table, evidence probes, adaptive policy ─────────
+try:
+    from state_table import StateTable
+    ENH_STATE = True
+except Exception:
+    StateTable = None
+    ENH_STATE = False
+
+try:
+    from evidence import run_evidence_probes
+    ENH_EVIDENCE = True
+except Exception:
+    run_evidence_probes = None
+    ENH_EVIDENCE = False
+
+try:
+    from policy import ContextPolicy, classify_task, effective_threshold
+    ENH_POLICY = True
+except Exception:
+    ContextPolicy = None
+    classify_task = lambda messages: "prose"
+    effective_threshold = lambda model="", profile="", window=None: -1.0
+    ENH_POLICY = False
+
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
@@ -307,6 +331,16 @@ FOLD_ARCHIVE_PATH = os.environ.get(
 )
 # Strict session mode: never derive a session id from message content.
 STRICT_SESSION = os.environ.get("COMPACTION_PROXY_STRICT_SESSION", "0") == "1"
+
+# V11 P2/P4/P5: evidence floor, contract retry, learned policy, capability profile
+EVIDENCE_FLOOR = float(os.environ.get("COMPACTION_PROXY_EVIDENCE_FLOOR", "0.75"))
+CONTRACT_RETRY = os.environ.get("COMPACTION_PROXY_CONTRACT_RETRY", "1") == "1"
+POLICY_ENABLED = os.environ.get("COMPACTION_PROXY_POLICY", "0") == "1"
+AGENT_PROFILE = os.environ.get("COMPACTION_PROXY_AGENT_PROFILE", "")
+STATE_DB_PATH = os.environ.get(
+    "COMPACTION_PROXY_STATE_DB",
+    os.path.join(os.path.expanduser("~/.local/share/compaction-proxy"), "state.db"),
+)
 
 # V5: Dual-Layer Compression (inspired by Hermes gateway+agent architecture)
 DUAL_LAYER_GATEWAY_RATIO = float(os.environ.get("COMPACTION_PROXY_DUAL_GATEWAY_RATIO", "0.15"))  # Keep 15% (85% reduction)
@@ -916,6 +950,22 @@ SEMANTIC_FIDELITY_FLOOR = float(os.environ.get("COMPACTION_PROXY_FIDELITY_FLOOR"
 semantic_fidelity_scorer = FidelityScorer() if ENH_FIDELITY and FidelityScorer is not None else None
 quality_breaker = QualityBreaker(failure_threshold=3, cooldown_seconds=60) if ENH_FIDELITY and QualityBreaker is not None else None
 fold_archive = FoldArchive(FOLD_ARCHIVE_PATH) if (ENH_FOLDING and FOLDING_ENABLED and FoldArchive is not None) else None
+
+# V11 P1b/P4: state table + adaptive policy (only instantiated when needed)
+state_table = StateTable(STATE_DB_PATH) if (ENH_STATE and (FOLDING_ENABLED or POLICY_ENABLED)) else None
+context_policy = ContextPolicy(floor=EVIDENCE_FLOOR) if (ENH_POLICY and POLICY_ENABLED and ContextPolicy is not None) else None
+
+
+def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float) -> None:
+    """Cost attribution (V11 P5): compaction call cost vs tokens saved."""
+    before_t = estimate_tokens_accurate(before_msgs)
+    summary_t = max(1, len(summary or "") // 4)
+    call_tokens = before_t + 2000  # prompt + max output of the compaction model (estimate)
+    saved = max(0, before_t - summary_t)
+    metrics.inc("compaction_calls")
+    metrics.inc("compaction_cost_tokens_total", call_tokens)
+    metrics.inc("compaction_saved_tokens_total", saved)
+    metrics.inc("compaction_latency_ms_total", int(latency_ms))
 
 # ── V4: Episodic-Semantic Dual-Layer Memory ──────────────────────────
 
@@ -5725,7 +5775,12 @@ def should_compact_preemptively(body: dict) -> bool:
 
     # Deduct response budget and safety margin
     usable_limit = context_limit - RESPONSE_BUDGET - SAFETY_MARGIN
-    threshold = int(usable_limit * PREEMPTIVE_THRESHOLD)
+    threshold_pct = PREEMPTIVE_THRESHOLD
+    if ENH_POLICY and AGENT_PROFILE:
+        adaptive = effective_threshold(model, AGENT_PROFILE, context_limit)
+        if adaptive > 0:
+            threshold_pct = adaptive
+    threshold = int(usable_limit * threshold_pct)
 
     # Stage 1: Fast estimation
     fast_est = estimate_tokens_fast(messages)
@@ -5887,10 +5942,18 @@ async def do_compaction(
     requested_keep = body.get("keep_recent_turns", KEEP_RECENT_TURNS)
     base_keep = requested_keep if isinstance(requested_keep, int) and requested_keep >= 2 else KEEP_RECENT_TURNS
     adaptive_max_keep = max(2, user_msg_count // 2) if user_msg_count > 0 else base_keep
+    # V11 P4: task class keys the adaptive policy bandit
+    task_class = classify_task(messages) if ENH_POLICY else "prose"
 
     for attempt in range(1, MAX_COMPACTION_RETRIES + 1):
         keep_turns = min(base_keep - (attempt - 1) * 2, adaptive_max_keep)
         keep_turns = max(2, keep_turns)
+
+        # V11 P4: policy action (default standard; only active when POLICY_ENABLED)
+        action = "standard"
+        if ENH_POLICY and context_policy is not None:
+            action = context_policy.choose(task_class, session_id)
+            keep_turns = max(2, keep_turns + {"light": 2, "standard": 0, "deep": -2}[action])
 
         logger.info(
             f"Compaction attempt {attempt}/{MAX_COMPACTION_RETRIES} (keep_recent={keep_turns})"
@@ -6003,6 +6066,7 @@ async def do_compaction(
             metrics.inc("submodular_selection_applied")
 
         # Parallel block compaction
+        t0 = time.monotonic()
         if len(selected_old) >= 6:
             summary = await compact_messages_parallel(selected_old, api_key, session, session_id=session_id,
                                                        selected_skills=selected_skills)
@@ -6015,19 +6079,54 @@ async def do_compaction(
             metrics.inc("compaction_attempt_failed")
             continue
 
+        # V11 P5: cost attribution (compaction call cost vs tokens saved)
+        record_compaction_cost(selected_old, summary, (time.monotonic() - t0) * 1000)
+
         # V5: Post-compact hook — allow hook to modify summary
         if hook_manager:
             summary = await hook_manager.call_post_compact(
                 summary, messages, {"session_id": session_id, "attempt": attempt}
             )
 
-        # V11 P1: reversible folding — archive the originals verbatim, render a typed
-        # placeholder with a retrievable ref, and verify the commitment contract.
+        # V11 P1b/P2: reversible folding + state snapshot + evidence probes + contract retry
         if FOLDING_ENABLED and ENH_FOLDING and fold_archive is not None:
             try:
                 identifiers = extract_identifiers(old_msgs)
+                state_snapshot = ""
+                if state_table is not None:
+                    state_table.update(session_id, old_msgs)
+                    state_table.update(session_id, recent_msgs)
+                    state_snapshot = state_table.render(session_id)
+
                 contract = verify_commitments(summary, commitments, identifiers)
-                metrics.inc("fold_contract_checked")
+                probes = None
+                if ENH_EVIDENCE and run_evidence_probes is not None:
+                    probes = run_evidence_probes(old_msgs, summary, commitments, identifiers)
+                    metrics.inc("evidence_probe_runs")
+                    metrics.inc("evidence_score_milli", int(probes["score"] * 1000))
+
+                # P2: one retry with an explicit preservation list when evidence is weak
+                if probes and probes["score"] < EVIDENCE_FLOOR and CONTRACT_RETRY:
+                    metrics.inc("evidence_retry")
+                    preserve = format_commitments_for_prompt(commitments)
+                    retry_prompt = (
+                        COMPACTION_SYSTEM_PROMPT
+                        + ("\n\n" + SUMMARY_SECTION_PROMPT if SUMMARY_SECTION_PROMPT else "")
+                        + ("\n\n" + preserve if preserve else "")
+                        + "\n\n## MUST PRESERVE VERBATIM\n"
+                        + "\n".join(f"- {i}" for i in identifiers[:30])
+                    )
+                    retried = await compact_messages(
+                        old_msgs, api_key, session, session_id=session_id,
+                        _save_state=False, system_prompt_override=retry_prompt,
+                    )
+                    if retried:
+                        probes2 = run_evidence_probes(old_msgs, retried, commitments, identifiers)
+                        if probes2["score"] > probes["score"]:
+                            summary, probes = retried, probes2
+                            contract = probes2["contract"]
+                            metrics.inc("evidence_retry_improved")
+
                 if contract["missing"] or contract["identifiers_missing"]:
                     metrics.inc("fold_contract_miss")
                     logger.warning(
@@ -6037,11 +6136,23 @@ async def do_compaction(
                         contract["identifiers_total"],
                     )
                     summary = summary + "\n\n" + format_missing_note(contract)
+                if probes and probes["failures"]:
+                    summary = summary + "\n\n" + probes["note"]
+
                 ref = fold_archive.put(session_id, "compaction", old_msgs)
                 digest = build_fold_digest(old_msgs, commitments=commitments)
-                summary = render_fold_block(digest, ref) + "\n\n" + summary
+                summary = (
+                    (state_snapshot + "\n\n") if state_snapshot else ""
+                ) + render_fold_block(digest, ref) + "\n\n" + summary
                 metrics.inc("fold_archive_write")
-                logger.info("Folded %d messages into %s", len(old_msgs), ref)
+                logger.info(
+                    "Folded %d messages into %s (evidence %.2f)",
+                    len(old_msgs), ref, probes["score"] if probes else -1,
+                )
+
+                if ENH_POLICY and context_policy is not None and probes:
+                    context_policy.reward(task_class, action, probes["score"])
+                    context_policy.observe_quality(session_id, probes["score"])
             except Exception as e:
                 logger.warning("Folding skipped (non-fatal): %s", e)
 
@@ -6995,6 +7106,28 @@ async def handle_health(request: web.Request) -> web.Response:
             "enabled": bool(FOLDING_ENABLED and ENH_FOLDING),
             "archive": fold_archive.stats() if fold_archive else None,
             "strict_session": STRICT_SESSION,
+            "state_table": state_table.stats() if state_table else None,
+        },
+        "evidence": {
+            "floor": EVIDENCE_FLOOR,
+            "runs": metrics.get("evidence_probe_runs"),
+            "avg_score": round(
+                metrics.get("evidence_score_milli")
+                / max(1, metrics.get("evidence_probe_runs")) / 1000, 3
+            ),
+            "retries": metrics.get("evidence_retry"),
+            "improved": metrics.get("evidence_retry_improved"),
+        },
+        "policy": context_policy.stats() if (ENH_POLICY and context_policy is not None) else {"enabled": False},
+        "cost": {
+            "calls": metrics.get("compaction_calls"),
+            "cost_tokens": metrics.get("compaction_cost_tokens_total"),
+            "saved_tokens": metrics.get("compaction_saved_tokens_total"),
+            "net_saved_tokens": (
+                metrics.get("compaction_saved_tokens_total")
+                - metrics.get("compaction_cost_tokens_total")
+            ),
+            "latency_ms_total": metrics.get("compaction_latency_ms_total"),
         },
         "compaction_model": COMPACTION_MODEL,
         "keep_recent_turns": KEEP_RECENT_TURNS,

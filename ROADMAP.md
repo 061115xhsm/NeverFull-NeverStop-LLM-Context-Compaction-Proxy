@@ -5,8 +5,9 @@
 
 > **2026-10-26 状态修订（V11）**：本表“✅ 已实现”中有 6 项是写了文件但**主程序从未 import**
 > （memskill_rl / incremental_compaction / async_precompressor / storage_backend / rust_ffi / rust），
-> 已移入 `attic/`。新增 P0 工程基线（requirements / CI / 28 项测试）与 P1 可逆折叠
-> （`folding.py`，`COMPACTION_PROXY_FOLDING=1` 开启）。详见 `STATUS.md` 与 `research/RESEARCH-2026.md`。
+> 已移入 `attic/`。V11 已完成 P0 工程基线（requirements / CI / 53 项测试）、P1 可逆折叠、
+> P2 证据探针+契约重试、P3 配对评测、P4 bandit 策略、P5 成本归因与能力档位。
+> 开关与边界见 `STATUS.md`，调研依据见 `research/RESEARCH-2026.md`。
 
 ---
 

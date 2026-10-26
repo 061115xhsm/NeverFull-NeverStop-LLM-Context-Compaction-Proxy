@@ -15,6 +15,9 @@
 
 **Solve context window overflow once and for all.** A transparent, zero-config LLM context management proxy that sits between your AI agent and any LLM provider. When conversation context approaches the model's token limit, it **auto-compresses chat history** so your long-context agent keeps running indefinitely — no more hitting context window walls, no more losing the thread.
 
+> **V11 状态（2026-10）**：当前实现边界、已知差距与开关见 [STATUS.md](STATUS.md)；
+> 压缩正确性主指标已改为**配对延续评测 + 证据保留率**（见下文 Benchmark）。
+
 **Built for long-context agents:** OpenClaw · Claude Code · Hermes · DeepSeek Harness — all verified integrations included.
 
 **40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
@@ -420,6 +423,11 @@ Set `COMPACTION_PROXY_UPSTREAM_IS_ANTHROPIC=auto` (default) for automatic detect
 ---
 
 ## 📊 Benchmark — Official LongBench Results
+
+> **V11 口径（2026-10）**：下表的 cosine 保真度仅作为**压缩守门断言**，不再是项目主指标。
+> 主指标为配对延续评测（`benchmark/paired_eval.py`，Compact-Bench arXiv:2610.31710 风格）
+> 与证据保留率（commitment / identifier contract，`evidence.py`，KEEP-Bench arXiv:2610.26827 风格）。
+> 复现：`python benchmark/paired_eval.py`。
 
 Validated on the **official THUDM/LongBench dataset** (real 6K-15K-char documents, 30 subsets / 340 samples) with real embedding fidelity scoring:
 
