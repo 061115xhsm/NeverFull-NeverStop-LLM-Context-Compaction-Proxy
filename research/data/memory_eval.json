@@ -1,0 +1,112 @@
+{
+  "conversations": 2,
+  "reader": "llm",
+  "summary": {
+    "full": {
+      "views": 2,
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.333,
+      "summary_s": 0.0,
+      "cost": 0
+    },
+    "truncate": {
+      "views": 2,
+      "compression": 0.65,
+      "evidence": 0.917,
+      "qa": 0.0,
+      "summary_s": 0.0,
+      "cost": 0
+    },
+    "llm": {
+      "views": 2,
+      "compression": 0.978,
+      "evidence": 0.375,
+      "qa": 0.0,
+      "summary_s": 9.87,
+      "cost": 31201
+    },
+    "v11": {
+      "views": 2,
+      "compression": 0.966,
+      "evidence": 0.375,
+      "qa": 0.0,
+      "summary_s": 11.58,
+      "cost": 31963
+    }
+  },
+  "details": [
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.333,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 0.833,
+      "qa": 0.0,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "llm",
+      "compression": 0.981,
+      "evidence": 0.333,
+      "qa": 0.0,
+      "cost": 17166,
+      "seconds": 10.16
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "compression": 0.971,
+      "evidence": 0.333,
+      "qa": 0.0,
+      "cost": 17547,
+      "seconds": 11.57
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.333,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 1.0,
+      "qa": 0.0,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "llm",
+      "compression": 0.975,
+      "evidence": 0.417,
+      "qa": 0.0,
+      "cost": 14035,
+      "seconds": 9.58
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "v11",
+      "compression": 0.962,
+      "evidence": 0.417,
+      "qa": 0.0,
+      "cost": 14416,
+      "seconds": 11.59
+    }
+  ]
+}

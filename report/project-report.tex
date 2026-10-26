@@ -296,6 +296,24 @@ Hermes & 0.471 & 0.636 & 1.0 & 3/4 & 11,410 \\
 \subsection{配对评测}
 \texttt{benchmark/paired\_eval.py} 对同一对话构造 full / truncate / summary / fold 四种视图，在相同探针上测压缩率与证据保留。合成样例上 fold 视图压缩 92.2\%、证据保留 1.000；truncate 压缩 65.0\%、证据保留 1.000（因答案位于尾部），说明该指标能区分“保留了什么”而非仅看长度。
 
+\subsection{补充：LoCoMo 记忆基准}
+在三方编码会话之外，我们用公开记忆基准 LoCoMo 的一条长对话（conv-26，按类别分层抽 5 问）检验压缩后的长对话问答。相同摘要模型下，通用摘要压缩 98.1\% 但证据保留仅 0.400；V11 在 92.0\% 压缩下把证据保留拉回 0.900（与 35\% 截断持平），问答 0.200。完整上下文问答也只有 0.600，说明本地 reader 的时间推理能力是当前上限；该结果用于验证证据保留维度，而非宣称问答能力。详见 \texttt{research/EVAL-2026-10-26.md}。
+
+\begin{table}[htbp]
+\centering
+\caption{LoCoMo 单会话补充评测（conv-26，5 问）}
+\begin{tabular}{lcccc}
+\toprule
+策略 & 压缩率 & 证据保留 & 问答 & 摘要耗时 \\
+\midrule
+full & 0.000 & 1.000 & 0.600 & 0 s \\
+truncate & 0.650 & 0.900 & 0.200 & 0 s \\
+通用 LLM 摘要 & 0.981 & 0.400 & 0.000 & 9.4 s \\
+\textbf{V11 折叠} & \textbf{0.920} & \textbf{0.900} & 0.200 & 11.3 s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{测试与压力}
 \begin{table}[htbp]
 \centering

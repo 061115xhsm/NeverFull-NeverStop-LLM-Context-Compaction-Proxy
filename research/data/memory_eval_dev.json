@@ -1,0 +1,76 @@
+{
+  "conversations": 1,
+  "reader": "llm",
+  "summary": {
+    "full": {
+      "views": 1,
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.6,
+      "summary_s": 0.0,
+      "cost": 0
+    },
+    "truncate": {
+      "views": 1,
+      "compression": 0.65,
+      "evidence": 0.9,
+      "qa": 0.2,
+      "summary_s": 0.0,
+      "cost": 0
+    },
+    "llm": {
+      "views": 1,
+      "compression": 0.981,
+      "evidence": 0.4,
+      "qa": 0.0,
+      "summary_s": 9.36,
+      "cost": 17166
+    },
+    "v11": {
+      "views": 1,
+      "compression": 0.92,
+      "evidence": 0.9,
+      "qa": 0.2,
+      "summary_s": 11.31,
+      "cost": 17547
+    }
+  },
+  "details": [
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.6,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 0.9,
+      "qa": 0.2,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "llm",
+      "compression": 0.981,
+      "evidence": 0.4,
+      "qa": 0.0,
+      "cost": 17166,
+      "seconds": 9.36
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "compression": 0.92,
+      "evidence": 0.9,
+      "qa": 0.2,
+      "cost": 17547,
+      "seconds": 11.31
+    }
+  ]
+}

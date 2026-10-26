@@ -42,3 +42,5 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Paired compaction evaluation
         run: python benchmark/paired_eval.py --limit 3
+      - name: Memory benchmark (synthetic, deterministic)
+        run: python benchmark/memory_eval.py --reader extractive --questions 3 --strategies full,truncate
