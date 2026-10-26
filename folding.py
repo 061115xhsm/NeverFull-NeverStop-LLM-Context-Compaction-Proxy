@@ -35,6 +35,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import time
 from collections import Counter
 from pathlib import Path
@@ -92,8 +93,10 @@ class FoldArchive:
     def __init__(self, path: str | os.PathLike | None = None) -> None:
         self.path = Path(path or DEFAULT_DB).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=5)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
@@ -101,19 +104,21 @@ class FoldArchive:
         payload = json.dumps(messages, ensure_ascii=False)
         if ref is None:
             ref = "fold:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
-        self._conn.execute(
-            "INSERT OR REPLACE INTO folds(ref, session_id, created_at, kind, n_messages, approx_tokens, payload) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (ref, session_id, time.time(), kind, len(messages), _approx_tokens(messages), payload),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO folds(ref, session_id, created_at, kind, n_messages, approx_tokens, payload) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (ref, session_id, time.time(), kind, len(messages), _approx_tokens(messages), payload),
+            )
+            self._conn.commit()
         return ref
 
     def get(self, ref: str) -> Optional[dict]:
-        row = self._conn.execute(
-            "SELECT ref, session_id, created_at, kind, n_messages, approx_tokens, payload FROM folds WHERE ref=?",
-            (ref,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT ref, session_id, created_at, kind, n_messages, approx_tokens, payload FROM folds WHERE ref=?",
+                (ref,),
+            ).fetchone()
         if row is None:
             return None
         return {
@@ -128,15 +133,17 @@ class FoldArchive:
 
     def stats(self) -> dict:
         try:
-            n = self._conn.execute("SELECT COUNT(*) FROM folds").fetchone()[0]
-            tokens = self._conn.execute("SELECT COALESCE(SUM(approx_tokens),0) FROM folds").fetchone()[0]
+            with self._lock:
+                n = self._conn.execute("SELECT COUNT(*) FROM folds").fetchone()[0]
+                tokens = self._conn.execute("SELECT COALESCE(SUM(approx_tokens),0) FROM folds").fetchone()[0]
         except sqlite3.Error:
             return {"entries": 0, "tokens_archived": 0, "path": str(self.path)}
         return {"entries": n, "tokens_archived": tokens, "path": str(self.path)}
 
     def close(self) -> None:
         try:
-            self._conn.close()
+            with self._lock:
+                self._conn.close()
         except sqlite3.Error:
             pass
 

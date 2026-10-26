@@ -25,6 +25,7 @@ import difflib
 import os
 import re
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -81,8 +82,10 @@ class StateTable:
     def __init__(self, path: str | os.PathLike | None = None) -> None:
         self.path = Path(path or DEFAULT_DB).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=5)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
         self._conn.commit()
 
@@ -90,10 +93,11 @@ class StateTable:
     def update(self, session_id: str, messages: list, now: Optional[float] = None) -> None:
         now = time.time() if now is None else now
         edits_seen = set()
-        for msg in messages or []:
-            self._ingest_tool_calls(session_id, msg, now, edits_seen)
-            self._ingest_decisions(session_id, msg, now)
-        self._conn.commit()
+        with self._lock:
+            for msg in messages or []:
+                self._ingest_tool_calls(session_id, msg, now, edits_seen)
+                self._ingest_decisions(session_id, msg, now)
+            self._conn.commit()
 
     def _ingest_tool_calls(self, session_id: str, msg: dict, now: float, edits_seen: set) -> None:
         calls = []
@@ -191,6 +195,10 @@ class StateTable:
 
     # ── render ────────────────────────────────────────────────────────
     def render(self, session_id: str, max_files: int = 8, max_decisions: int = 6) -> str:
+        with self._lock:
+            return self._render_locked(session_id, max_files, max_decisions)
+
+    def _render_locked(self, session_id: str, max_files: int, max_decisions: int) -> str:
         files = self._conn.execute(
             "SELECT path, last_op, ts, edits, reads FROM files WHERE session_id=? "
             "ORDER BY ts DESC LIMIT ?",
@@ -230,6 +238,10 @@ class StateTable:
         return "\n".join(lines)
 
     def get(self, session_id: str) -> dict:
+        with self._lock:
+            return self._get_locked(session_id)
+
+    def _get_locked(self, session_id: str) -> dict:
         files = self._conn.execute(
             "SELECT path, last_op, ts, edits, reads FROM files WHERE session_id=? ORDER BY ts DESC",
             (session_id,),
@@ -249,20 +261,23 @@ class StateTable:
         }
 
     def reset(self, session_id: str) -> None:
-        self._conn.execute("DELETE FROM files WHERE session_id=?", (session_id,))
-        self._conn.execute("DELETE FROM decisions WHERE session_id=?", (session_id,))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute("DELETE FROM files WHERE session_id=?", (session_id,))
+            self._conn.execute("DELETE FROM decisions WHERE session_id=?", (session_id,))
+            self._conn.commit()
 
     def stats(self) -> dict:
         try:
-            files = self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-            dec = self._conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+            with self._lock:
+                files = self._conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+                dec = self._conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
         except sqlite3.Error:
             files = dec = 0
         return {"files": files, "decisions": dec, "path": str(self.path)}
 
     def close(self) -> None:
         try:
-            self._conn.close()
+            with self._lock:
+                self._conn.close()
         except sqlite3.Error:
             pass
