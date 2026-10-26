@@ -20,11 +20,23 @@
 
 **Built for long-context agents:** OpenClaw · Claude Code · Hermes · DeepSeek Harness — all verified integrations included.
 
-**40+ compression techniques** across 7 generations, from academic research (ARC, AFM, PACMS, CoMem, MemSkill) to production patterns (Cursor, Devin, SWE-agent).
+**V11 (2026-10) core:** reversible **context folding** with an addressable archive, **commitment / identifier contracts**, deterministic **evidence probes**, optional per-model token calibration and a UCB compaction policy. Earlier heuristic layers (ARC citations, AFM fidelity tiers, submodular selection, dual-layer compression) remain available behind their existing flags.
 
 ---
 
 ## ✨ Feature Highlights
+
+### 🧩 V11: correctness-first compaction
+| Feature | Description |
+|---------|-------------|
+| **Reversible Folding** | Old turns are archived verbatim (`fold:<hash>`) and replaced by a typed `<folded_context>` placeholder; `GET /fold/{ref}` returns the originals (paginated) |
+| **State Snapshot** | Per-session file/decision table marks stale reads and superseded decisions (`<state_snapshot>`) |
+| **Commitment Contract** | Goals/constraints/decisions/tasks and exact identifiers are verified after compaction; misses are disclosed, with one MUST-PRESERVE retry |
+| **Evidence Probes** | Deterministic score over commitments, identifiers, sections, and the last ask; below-floor results are surfaced to the agent |
+| **Paired Evaluation** | `benchmark/paired_eval.py` compares full / truncate / summary / fold views on compression + evidence recall |
+| **Retention & Ops** | TTL/row caps for folds, state and sessions; `POST /maintenance/prune`; optional Fernet archive encryption |
+| **Security Defaults** | 2 MB body cap, optional per-IP rate limit, fail-closed `REQUIRE_AUTH`, loopback bind |
+| **Cost Attribution** | Provider `usage` captured per compaction; `/health` exposes net saved tokens, cache hits and latency p50/p95 |
 
 ### 🧠 Context Compression Engine
 | Feature | Description |
@@ -439,7 +451,7 @@ Validated on the **official THUDM/LongBench dataset** (real 6K-15K-char document
 | **Headroom** (smart_crusher, measured) | 0.346 | 0.397 | 10 |
 | **adaptive (fidelity-gated)** | **0.708** | **0.996** | 340 |
 
-**Key takeaway**: `adaptive` delivers **70.8% compression with 99.6% semantic fidelity** — comparable compression to the LLMLingua-7B SOTA baseline but **+17pp higher fidelity**, and **34× faster** (42ms CPU vs 1440ms GPU). vs. engineering-layer **Headroom**: measured on the same JSON data, Headroom compresses 34.6% at 0.397 fidelity (and skips user/code/prose content entirely), while `adaptive` compresses 50% at 0.521 fidelity. Full data tables: see **[BENCHMARK.md](BENCHMARK.md)**. Reproduce with `benchmark/` scripts.
+**How to read this (V11):** the table above is the historical LongBench study and uses embedding cosine as a **guardrail** only; pure truncation scores 1.000 there, which shows the metric saturates. The primary metric is now the paired evaluation (`benchmark/paired_eval.py`, Compact-Bench style) plus evidence recall (commitment/identifier survival). A controlled three-way comparison against OpenClaw and Hermes is in **[research/COMPARE-2026-10-26.md](research/COMPARE-2026-10-26.md)**: on a 131-message / ~9k-token session, NeverFull V11 kept 11/11 gold spans and answered 4/4 reader questions at 0.86 compression, versus 0.64 evidence recall for both OpenClaw and Hermes.
 
 ---
 

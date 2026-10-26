@@ -216,6 +216,13 @@ except Exception:
     TokenCalibrator = None
     ENH_CALIBRATION = False
 
+try:
+    from cost_tracker import CostTracker
+    ENH_COST = True
+except Exception:
+    CostTracker = None
+    ENH_COST = False
+
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
@@ -980,6 +987,7 @@ class Metrics:
 
 metrics = Metrics()
 token_calibrator = TokenCalibrator() if (ENH_CALIBRATION and TokenCalibrator is not None) else None
+cost_tracker = CostTracker() if (ENH_COST and CostTracker is not None) else None
 COMPACTION_USAGE = contextvars.ContextVar("compaction_usage", default=None)
 
 # ── V8: 语义保真度增强组件(可选) ────────────────────────────────────
@@ -993,7 +1001,8 @@ state_table = StateTable(STATE_DB_PATH) if (ENH_STATE and (FOLDING_ENABLED or PO
 context_policy = ContextPolicy(floor=EVIDENCE_FLOOR) if (ENH_POLICY and POLICY_ENABLED and ContextPolicy is not None) else None
 
 
-def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float) -> None:
+def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float,
+                           cache_hit: bool = False, model: str = "") -> None:
     """Cost attribution (V11 P5): measured usage when available, estimate otherwise."""
     usage = COMPACTION_USAGE.get()
     before_t = estimate_tokens_accurate(before_msgs)
@@ -1012,6 +1021,15 @@ def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float) -
     metrics.inc("compaction_saved_tokens_total", saved)
     metrics.inc("compaction_latency_ms_total", int(latency_ms))
     metrics.observe("compaction_latency_ms", latency_ms)
+    if cost_tracker is not None:
+        cost_tracker.record(
+            session_id="", model=model or (usage.get("model") if isinstance(usage, dict) else "") or "",
+            before_tokens=before_t, after_tokens=summary_t,
+            cost_tokens=(0 if cache_hit else call_tokens),
+            latency_ms=latency_ms, cache_hit=cache_hit,
+        )
+    if cache_hit:
+        metrics.inc("compaction_cache_saved_tokens_total", saved)
 
 # ── V4: Episodic-Semantic Dual-Layer Memory ──────────────────────────
 
@@ -4759,6 +4777,10 @@ async def compact_messages(
     if cached is not None:
         logger.info(f"Compaction cache hit ({len(cached)} chars)")
         metrics.inc("compaction_cache_hit")
+        try:
+            record_compaction_cost(old_messages, cached, 0.0, cache_hit=True)
+        except Exception:
+            pass
         return cached
 
     metrics.inc("compaction_cache_miss")
@@ -7298,6 +7320,7 @@ async def handle_health(request: web.Request) -> web.Response:
             "max_body_mb": MAX_BODY_MB,
             "fold_encrypted": bool(fold_archive.encrypted) if fold_archive else False,
         },
+        "cost_recent": cost_tracker.summary() if cost_tracker else {"events": 0},
         "compaction_model": COMPACTION_MODEL,
         "keep_recent_turns": KEEP_RECENT_TURNS,
         "max_retries": MAX_COMPACTION_RETRIES,

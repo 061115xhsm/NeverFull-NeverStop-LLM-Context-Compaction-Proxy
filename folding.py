@@ -179,6 +179,50 @@ class FoldArchive:
             return {"entries": 0, "tokens_archived": 0, "path": str(self.path)}
         return {"entries": n, "tokens_archived": tokens, "path": str(self.path)}
 
+    def rotate_key(self, new_key_path: str | os.PathLike | None = None) -> int:
+        """Re-encrypt every folded payload under a fresh Fernet key.
+
+        Returns the number of rows rotated. No-op on plaintext archives.
+        """
+        if self._fernet is None:
+            return 0
+        from cryptography.fernet import Fernet
+
+        new_path = Path(new_key_path or (self.path.parent / "fold.key.new")).expanduser()
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        new_key = Fernet.generate_key()
+        new_path.write_bytes(new_key)
+        try:
+            os.chmod(new_path, 0o600)
+        except OSError:
+            pass
+        new_fernet = Fernet(new_key)
+
+        rotated = 0
+        with self._lock:
+            rows = self._conn.execute("SELECT ref, payload FROM folds").fetchall()
+            for ref, payload in rows:
+                if not (isinstance(payload, str) and payload.startswith("enc:v1:")):
+                    continue
+                try:
+                    plain = self._fernet.decrypt(payload[7:].encode("ascii"))
+                except Exception:
+                    continue
+                token = "enc:v1:" + new_fernet.encrypt(plain).decode("ascii")
+                self._conn.execute("UPDATE folds SET payload=? WHERE ref=?", (token, ref))
+                rotated += 1
+            self._conn.commit()
+
+        key_file = self.path.parent / "fold.key"
+        if key_file.exists():
+            try:
+                key_file.replace(key_file.with_suffix(".key.bak"))
+            except OSError:
+                pass
+        new_path.replace(key_file)
+        self._fernet = new_fernet
+        return rotated
+
     def prune(self, max_entries: int = 0, max_age_days: float = 30.0) -> int:
         """Retention: drop old folds, then trim to max_entries (newest kept)."""
         removed = 0
