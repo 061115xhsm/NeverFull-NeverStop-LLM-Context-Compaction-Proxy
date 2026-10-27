@@ -4,3 +4,10 @@
 sentence-transformers>=2.7
 psycopg2-binary>=2.9
 redis>=5
+tree-sitter>=0.25
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-go
+tree-sitter-rust
+boto3>=1.34

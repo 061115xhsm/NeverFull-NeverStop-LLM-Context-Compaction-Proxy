@@ -243,12 +243,13 @@ except Exception:
 try:
     from virtual_tool import (TOOL_NAME as RESTORE_TOOL_NAME, inject_restore_tool,
                               extract_restore_calls, build_restore_messages,
-                              parse_stream_restore_calls)
+                              parse_stream_restore_calls, parse_anthropic_stream_restore_calls)
     ENH_RESTORE = True
 except Exception:
     RESTORE_TOOL_NAME = ""
     inject_restore_tool = extract_restore_calls = build_restore_messages = None
     parse_stream_restore_calls = None
+    parse_anthropic_stream_restore_calls = None
     ENH_RESTORE = False
 
 try:
@@ -289,6 +290,13 @@ try:
 except Exception:
     PgFoldArchive = None
     ENH_PG_FOLD = False
+
+try:
+    from object_store import from_env as object_store_from_env
+    ENH_OBJECT_STORE = True
+except Exception:
+    object_store_from_env = None
+    ENH_OBJECT_STORE = False
 
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
@@ -423,6 +431,7 @@ MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_MAX_FOLDS", "5000"))
 MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_MAX_SESSIONS", "2000"))
 MAINTENANCE_EVERY = int(os.environ.get("COMPACTION_PROXY_MAINTENANCE_EVERY", "100"))
 FOLD_ENCRYPT = os.environ.get("COMPACTION_PROXY_FOLD_ENCRYPT", "0") == "1"
+OBJECT_STORE = object_store_from_env() if (ENH_OBJECT_STORE and object_store_from_env is not None) else None
 
 # V11 P6: multi-instance / multi-tenant
 INSTANCE_ID = os.environ.get("COMPACTION_PROXY_INSTANCE_ID") or socket.gethostname()
@@ -1087,7 +1096,8 @@ COMPACTION_USAGE = contextvars.ContextVar("compaction_usage", default=None)
 SEMANTIC_FIDELITY_FLOOR = float(os.environ.get("COMPACTION_PROXY_FIDELITY_FLOOR", "0.92"))
 semantic_fidelity_scorer = FidelityScorer() if ENH_FIDELITY and FidelityScorer is not None else None
 quality_breaker = QualityBreaker(failure_threshold=3, cooldown_seconds=60) if ENH_FIDELITY and QualityBreaker is not None else None
-fold_archive = FoldArchive(FOLD_ARCHIVE_PATH, encrypt=FOLD_ENCRYPT) if (ENH_FOLDING and FOLDING_ENABLED and FoldArchive is not None) else None
+fold_archive = (FoldArchive(FOLD_ARCHIVE_PATH, encrypt=FOLD_ENCRYPT, object_store=OBJECT_STORE)
+                if (ENH_FOLDING and FOLDING_ENABLED and FoldArchive is not None) else None)
 
 # V11 P1b/P4: state table + adaptive policy (only instantiated when needed)
 state_table = StateTable(STATE_DB_PATH) if (ENH_STATE and (FOLDING_ENABLED or POLICY_ENABLED)) else None
@@ -7221,10 +7231,98 @@ async def handle_streaming(
         return web.Response(status=upstream_resp.status, body=error_body, content_type="application/json")
 
     metrics.inc("request_success")
-    if ENH_RESTORE and RESTORE_TOOL and FOLDING_ENABLED and ENH_FOLDING and not need_anthropic_conversion:
+    if ENH_RESTORE and RESTORE_TOOL and FOLDING_ENABLED and ENH_FOLDING:
+        if need_anthropic_conversion:
+            return await _stream_with_restore_anthropic(request, upstream_resp, body, clean_headers,
+                                                        session, original_model, t_stream_start)
         return await _stream_with_restore(request, upstream_resp, body, clean_headers, session,
                                           provider, original_model, t_stream_start)
     return await _stream_sse_response(request, upstream_resp, need_anthropic_conversion=need_anthropic_conversion, model=original_model, t_start=t_stream_start)
+
+
+async def _stream_with_restore_anthropic(request: web.Request, upstream_resp, body: dict,
+                                         headers: dict, session, model: str,
+                                         t_start: float) -> web.StreamResponse:
+    stream_resp = web.StreamResponse(status=200, headers={
+        "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive"})
+    try:
+        await stream_resp.prepare(request)
+    except Exception as e:
+        logger.warning(f"Cannot prepare anthropic restore stream ({e})")
+        upstream_resp.close()
+        return stream_resp
+
+    buffer, sniffing, restore, first = b"", True, False, True
+    try:
+        async for chunk in upstream_resp.content.iter_any():
+            if first:
+                metrics.observe("upstream_ttft_ms", (time.monotonic() - t_start) * 1000)
+                first = False
+            if sniffing:
+                buffer += chunk
+                if b"neverfull_restore_context" in buffer:
+                    restore = True
+                    sniffing = False
+                    continue
+                if b'"type":"content_block_delta"' in buffer or len(buffer) > 8192:
+                    await stream_resp.write(buffer)
+                    buffer = b""
+                    sniffing = False
+                continue
+            if restore:
+                buffer += chunk
+                continue
+            await stream_resp.write(chunk)
+
+        if restore:
+            await stream_resp.write(b": processing-context-restore\n\n")
+            calls = parse_anthropic_stream_restore_calls(buffer) if parse_anthropic_stream_restore_calls else []
+            if calls:
+                assistant_blocks = [{"type": "tool_use", "id": c["id"],
+                                     "name": RESTORE_TOOL_NAME, "input": c["args"]} for c in calls]
+                body.setdefault("messages", []).append({"role": "assistant", "content": assistant_blocks})
+                result_blocks = []
+                for c in calls:
+                    ref = str((c.get("args") or {}).get("fold_ref") or "")
+                    payload = {"ref": ref, "found": False}
+                    try:
+                        item = fold_archive.get(ref, tenant_id=current_tenant() if ENH_TENANT else "default") if fold_archive else None
+                        if item:
+                            msgs = item.get("messages") or []
+                            payload = {"ref": ref, "found": True, "total": len(msgs),
+                                       "messages": msgs[:50]}
+                        else:
+                            payload["error"] = "fold ref not found"
+                    except Exception as e:  # noqa: BLE001
+                        payload["error"] = f"restore failed: {e}"
+                    result_blocks.append({"type": "tool_result", "tool_use_id": c["id"],
+                                          "content": json.dumps(payload, ensure_ascii=False)})
+                body["messages"].append({"role": "user", "content": result_blocks})
+                metrics.inc("stream_restore_detected")
+                status, resp_body, _ = await forward_request(
+                    session, "/v1/messages", "POST", headers,
+                    json.dumps(body).encode("utf-8"), provider=None)
+                if status == 200:
+                    await stream_resp.write(resp_body)
+                    metrics.inc("stream_restore_followup")
+                else:
+                    metrics.inc("stream_restore_failed")
+                    await stream_resp.write(b"event: error\ndata: {\"error\":\"restore follow-up failed\"}\n\n")
+            else:
+                await stream_resp.write(buffer)
+        await stream_resp.write_eof()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"anthropic stream restore error: {e}")
+        try:
+            await stream_resp.write_eof()
+        except Exception:
+            pass
+    finally:
+        try:
+            upstream_resp.close()
+        except Exception:
+            pass
+    return stream_resp
 
 
 async def _stream_with_restore(request: web.Request, upstream_resp, body: dict, headers: dict,
@@ -7932,6 +8030,7 @@ async def handle_health(request: web.Request) -> web.Response:
             "mode": SHARED_STORAGE,
             "maintenance_owner": MAINTENANCE_OWNER,
             "redis_cache": shared_cache.backend if shared_cache else "disabled",
+            "object_store": bool(OBJECT_STORE and getattr(OBJECT_STORE, "enabled", False)),
         },
         "compaction_model": COMPACTION_MODEL,
         "keep_recent_turns": KEEP_RECENT_TURNS,
@@ -8700,7 +8799,7 @@ def main():
     if SHARED_STORAGE == "postgres" and PG_DSN:
         if ENH_PG_FOLD and PgFoldArchive is not None:
             try:
-                fold_archive = PgFoldArchive(PG_DSN, encrypt=FOLD_ENCRYPT)
+                fold_archive = PgFoldArchive(PG_DSN, encrypt=FOLD_ENCRYPT, object_store=OBJECT_STORE)
                 logger.info("FoldArchive: PostgreSQL shared archive enabled")
             except Exception as e:
                 logger.warning(f"PG fold archive unavailable ({e}); staying on SQLite")

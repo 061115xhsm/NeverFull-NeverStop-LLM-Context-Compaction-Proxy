@@ -133,3 +133,37 @@ def parse_stream_restore_calls(raw: bytes) -> list:
             args = {}
         out.append({"id": slot["id"] or "", "args": args})
     return out
+
+
+def parse_anthropic_stream_restore_calls(raw: bytes) -> list:
+    """Extract virtual tool_use blocks from an Anthropic SSE stream."""
+    calls = {}
+    try:
+        for line in raw.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line.startswith("data: "):
+                continue
+            try:
+                evt = json.loads(line[6:])
+            except Exception:
+                continue
+            etype = evt.get("type")
+            idx = evt.get("index", 0)
+            if etype == "content_block_start":
+                cb = evt.get("content_block") or {}
+                if cb.get("type") == "tool_use" and cb.get("name") == TOOL_NAME:
+                    calls[idx] = {"id": cb.get("id", ""), "args_raw": ""}
+            elif etype == "content_block_delta" and idx in calls:
+                delta = evt.get("delta") or {}
+                if delta.get("type") == "input_json_delta":
+                    calls[idx]["args_raw"] += delta.get("partial_json", "")
+    except Exception:
+        pass
+    out = []
+    for _, slot in sorted(calls.items()):
+        try:
+            args = json.loads(slot["args_raw"] or "{}")
+        except Exception:
+            args = {}
+        out.append({"id": slot["id"], "args": args})
+    return out

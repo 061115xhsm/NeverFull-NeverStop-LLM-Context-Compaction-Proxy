@@ -121,3 +121,29 @@ class TestStreamRestoreParser(unittest.TestCase):
         raw = (b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
                b'"function":{"name":"read_file","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n')
         self.assertEqual(parse_stream_restore_calls(raw), [])
+
+
+class TestAnthropicStreamParser(unittest.TestCase):
+    def test_fragmented_tool_use(self):
+        from virtual_tool import parse_anthropic_stream_restore_calls
+        raw = (
+            'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use",'
+            '"id":"toolu_1","name":"neverfull_restore_context","input":{}}}\n\n'
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta",'
+            '"partial_json":"{\\"fold_ref\\":\\"fold:x\\""}}\n\n'
+            'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta",'
+            '"partial_json":",\\"limit\\":2}"}}\n\n'
+            'data: {"type":"content_block_stop","index":1}\n\n'
+            'data: {"type":"message_stop"}\n\n'
+        ).encode()
+        calls = parse_anthropic_stream_restore_calls(raw)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["id"], "toolu_1")
+        self.assertEqual(calls[0]["args"]["fold_ref"], "fold:x")
+        self.assertEqual(calls[0]["args"]["limit"], 2)
+
+    def test_plain_text_not_intercepted(self):
+        from virtual_tool import parse_anthropic_stream_restore_calls
+        raw = (b'data: {"type":"content_block_start","index":0,"content_block":'
+               b'{"type":"text","text":""}}\n\ndata: {"type":"message_stop"}\n\n')
+        self.assertEqual(parse_anthropic_stream_restore_calls(raw), [])

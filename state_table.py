@@ -28,6 +28,11 @@ import os
 import re
 import sqlite3
 import threading
+
+try:
+    from symbols import extract_symbols
+except Exception:
+    extract_symbols = None
 import time
 from pathlib import Path
 from typing import Optional
@@ -177,7 +182,7 @@ class StateTable:
             return
         if any(t in name for t in ("read", "cat", "view", "open_file", "head", "tail")):
             self._record_read(session_id, path, content, now)
-            self._record_python_symbols(session_id, path, content, now)
+            self._record_symbols(session_id, path, content, now)
 
     def _record_read(self, session_id: str, path: str, content: str, now: float) -> None:
         lines = content.splitlines()
@@ -298,32 +303,46 @@ class StateTable:
         with self._lock:
             return self._render_locked(session_id, max_files, max_decisions)
 
-    def _record_python_symbols(self, session_id: str, path: str, content: str, now: float) -> None:
-        """Phase 3: AST symbol-level freshness for Python files (stdlib ast)."""
-        if not path.endswith(".py"):
-            return
-        try:
-            tree = ast.parse(content)
-        except Exception:
+    def _record_symbols(self, session_id: str, path: str, content: str, now: float) -> None:
+        """Phase 3: symbol-level freshness (tree-sitter multi-language; ast fallback)."""
+        syms = []
+        if extract_symbols is not None:
+            try:
+                syms = extract_symbols(path, content)
+            except Exception:
+                syms = []
+        if not syms and path.endswith(".py"):
+            try:
+                tree = ast.parse(content)
+            except Exception:
+                tree = None
+            if tree is not None:
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        kind = "class" if isinstance(node, ast.ClassDef) else "function"
+                        syms.append({
+                            "name": node.name, "kind": kind,
+                            "start": getattr(node, "lineno", 0),
+                            "end": getattr(node, "end_lineno", 0) or 0,
+                            "hash": hashlib.sha256(
+                                ast.dump(node, include_attributes=False).encode("utf-8")).hexdigest()[:16],
+                        })
+        if not syms:
             return
         stored = {(r[0], r[1]): r[2] for r in self._conn.execute(
             "SELECT name, kind, hash FROM symbols WHERE session_id=? AND path=?",
             (session_id, path),
         ).fetchall()}
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                kind = "class" if isinstance(node, ast.ClassDef) else "function"
-                body = ast.dump(node, include_attributes=False)
-                h = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
-                status = "FRESH" if stored.get((node.name, kind)) == h else "STALE"
-                self._conn.execute(
-                    "INSERT INTO symbols(session_id, path, name, kind, line_start, line_end, hash, ts, status) "
-                    "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, path, name, kind) DO UPDATE SET "
-                    "hash=excluded.hash, ts=excluded.ts, status=excluded.status, "
-                    "line_start=excluded.line_start, line_end=excluded.line_end",
-                    (session_id, path, node.name, kind, getattr(node, "lineno", 0),
-                     getattr(node, "end_lineno", 0) or 0, h, now, status),
-                )
+        for sym in syms:
+            status = "FRESH" if stored.get((sym["name"], sym["kind"])) == sym["hash"] else "STALE"
+            self._conn.execute(
+                "INSERT INTO symbols(session_id, path, name, kind, line_start, line_end, hash, ts, status) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, path, name, kind) DO UPDATE SET "
+                "hash=excluded.hash, ts=excluded.ts, status=excluded.status, "
+                "line_start=excluded.line_start, line_end=excluded.line_end",
+                (session_id, path, sym["name"], sym["kind"], sym["start"], sym["end"],
+                 sym["hash"], now, status),
+            )
 
     def _symbol_stats(self, session_id: str, path: str) -> dict:
         rows = self._conn.execute(

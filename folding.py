@@ -34,6 +34,7 @@ import base64
 import hashlib
 import json
 import os
+import zlib
 import re
 import sqlite3
 import threading
@@ -205,12 +206,13 @@ class FoldArchive:
     """Verbatim, addressable store for folded history (SQLite, WAL)."""
 
     def __init__(self, path: str | os.PathLike | None = None, encrypt: bool = False,
-                 key_path: str | os.PathLike | None = None) -> None:
+                 key_path: str | os.PathLike | None = None, object_store=None) -> None:
         self.path = Path(path or DEFAULT_DB).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fernet = None
         self._cipher = None
         self._cipher_kind = None
+        self._object_store = object_store
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=5)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -277,15 +279,20 @@ class FoldArchive:
                 tenant = current_tenant()
             except Exception:
                 tenant = "default"
-        payload = json.dumps(messages, ensure_ascii=False)
+        raw_json = json.dumps(messages, ensure_ascii=False)
+        if ref is None:
+            raw = tenant + "\x00" + raw_json
+            ref = "fold:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        payload = raw_json
         if self._cipher_kind == "envelope":
             payload = "env:v1:" + base64.b64encode(
                 self._cipher.encrypt_blob(tenant, payload.encode("utf-8"))).decode("ascii")
         elif self._fernet is not None:
             payload = "enc:v1:" + self._fernet.encrypt(payload.encode("utf-8")).decode("ascii")
-        if ref is None:
-            raw = tenant + "\x00" + json.dumps(messages, ensure_ascii=False)
-            ref = "fold:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+        if self._object_store is not None and getattr(self._object_store, "enabled", False):
+            key = f"folds/{tenant}/{ref}.zlib"
+            if self._object_store.put(key, zlib.compress(payload.encode("utf-8"))):
+                payload = "s3:v1:" + key
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO folds(ref, tenant_id, session_id, created_at, kind, n_messages, approx_tokens, payload) "
@@ -329,6 +336,16 @@ class FoldArchive:
         }
 
     def _decode(self, payload: str, tenant: str = "default"):
+        if isinstance(payload, str) and payload.startswith("s3:v1:"):
+            if self._object_store is None:
+                return []
+            data = self._object_store.get(payload[6:])
+            if data is None:
+                return []
+            try:
+                payload = zlib.decompress(data).decode("utf-8")
+            except Exception:
+                return []
         if isinstance(payload, str) and payload.startswith("env:v1:"):
             try:
                 return json.loads(self._cipher.decrypt_blob(tenant, base64.b64decode(payload[7:])).decode("utf-8"))
