@@ -388,6 +388,7 @@ INSTANCE_ID = os.environ.get("COMPACTION_PROXY_INSTANCE_ID") or socket.gethostna
 MAINTENANCE_OWNER = os.environ.get("COMPACTION_PROXY_MAINTENANCE_OWNER", "1") == "1"
 REDIS_URL = os.environ.get("COMPACTION_PROXY_REDIS_URL", "")
 SHARED_STORAGE = os.environ.get("COMPACTION_PROXY_STORAGE", "sqlite")
+SHADOW_MODE = os.environ.get("COMPACTION_PROXY_SHADOW", "0") == "1"
 PG_DSN = os.environ.get("COMPACTION_PROXY_PG_DSN", "")
 TENANT_MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_FOLDS", "0"))
 TENANT_MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_SESSIONS", "0"))
@@ -5955,6 +5956,40 @@ async def forward_request(
 
 # ── Preemptive Compaction Check ──────────────────────────────────────────
 
+def shadow_probe(body: dict, session_id: str = "") -> dict:
+    """Observe-only mode: estimate what compaction would do, never mutate the request."""
+    messages = body.get("messages", [])
+    model = body.get("model", "")
+    limit = get_model_context_limit(model)
+    usable = max(1, limit - RESPONSE_BUDGET - SAFETY_MARGIN)
+    pct = PREEMPTIVE_THRESHOLD
+    if ENH_POLICY and AGENT_PROFILE:
+        adaptive = effective_threshold(model, AGENT_PROFILE, limit)
+        if adaptive > 0:
+            pct = adaptive
+    threshold = int(usable * pct)
+    tokens = estimate_tokens_accurate(messages)
+    if token_calibrator is not None:
+        tokens = token_calibrator.apply(model, tokens)
+    would = tokens > threshold
+    projected_saved = 0
+    if would:
+        _old, recent = split_messages(messages, KEEP_RECENT_TURNS)
+        recent_tokens = estimate_tokens_accurate(recent)
+        projected_after = min(tokens, recent_tokens + 2000 + 300)
+        projected_saved = max(0, tokens - projected_after)
+        metrics.inc("shadow_would_compact")
+        metrics.inc("shadow_potential_saved_tokens", projected_saved)
+        metrics.observe("shadow_pressure_ratio", tokens / usable)
+    metrics.inc("shadow_requests")
+    logger.info(
+        "shadow: session=%s model=%s tokens=%d threshold=%d would_compact=%s projected_saved=%d",
+        session_id, model, tokens, threshold, would, projected_saved,
+    )
+    return {"tokens": tokens, "threshold": threshold, "would_compact": would,
+            "projected_saved": projected_saved}
+
+
 def should_compact_preemptively(body: dict) -> bool:
     """
     V4: Two-stage token estimation pre-screening.
@@ -6549,7 +6584,9 @@ async def handle_non_streaming(
     body_bytes = json.dumps(body).encode("utf-8")
 
     # 预防性压缩检查
-    if should_compact_preemptively(body):
+    if SHADOW_MODE:
+        shadow_probe(body, session_id)
+    elif should_compact_preemptively(body):
         metrics.inc("preemptive_compaction_triggered")
         compacted = await do_compaction(body, api_key, session, is_preemptive=True, session_id=session_id)
         if compacted is not None:
@@ -6594,6 +6631,9 @@ async def handle_non_streaming(
             f"messages={len(body.get('messages', []))})"
         )
         metrics.inc("overflow_detected")
+        if SHADOW_MODE:
+            metrics.inc("shadow_overflow_detected")
+            return web.Response(status=status, body=resp_body, headers=resp_headers)
 
         compacted = await do_compaction(body, api_key, session, is_preemptive=False, session_id=session_id)
         if compacted is not None:
@@ -6715,7 +6755,9 @@ async def handle_streaming(
     inject_session_context(body, session_id)
 
     # 预防性压缩检查
-    if should_compact_preemptively(body):
+    if SHADOW_MODE:
+        shadow_probe(body, session_id)
+    elif should_compact_preemptively(body):
         metrics.inc("preemptive_compaction_triggered")
         compacted = await do_compaction(body, api_key, session, is_preemptive=True, session_id=session_id)
         if compacted is not None:
@@ -7241,6 +7283,9 @@ async def handle_anthropic_messages(request: web.Request) -> web.Response:
         if is_context_overflow(status, resp_body):
             metrics.inc("context_overflow")
             logger.info("Anthropic /v1/messages: context overflow detected, attempting compaction")
+            if SHADOW_MODE:
+                metrics.inc("shadow_overflow_detected")
+                return web.Response(status=status, body=resp_body, headers=resp_headers)
             compacted_body = await do_compaction(openai_body, api_key, session, session_id=session_id)
             if compacted_body:
                 compacted_anthropic = openai_to_anthropic_request(compacted_body)
@@ -7395,6 +7440,13 @@ async def handle_health(request: web.Request) -> web.Response:
             "rate_limit_per_min": RATE_LIMIT,
             "max_body_mb": MAX_BODY_MB,
             "fold_encrypted": bool(fold_archive.encrypted) if fold_archive else False,
+        },
+        "shadow": {
+            "enabled": SHADOW_MODE,
+            "requests": metrics.get("shadow_requests"),
+            "would_compact": metrics.get("shadow_would_compact"),
+            "potential_saved_tokens": metrics.get("shadow_potential_saved_tokens"),
+            "overflow_detected": metrics.get("shadow_overflow_detected"),
         },
         "quotas": {
             "daily_token_limit": TENANT_DAILY_TOKENS,

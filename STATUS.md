@@ -55,6 +55,12 @@
 - 密钥轮换端点：`POST /maintenance/rotate-key`（实测轮换后数据可读）
 - 流式集成测试 + 归档密钥轮换 + 按请求成本追踪
 
+
+### P7 影子模式（2026-10-27）
+- `COMPACTION_PROXY_SHADOW=1`：只观测不压缩；记录 tokens/阈值/预计节省，请求原样转发
+- `/health.shadow` 输出 requests / would_compact / potential_saved_tokens / overflow_detected
+- 用于生产前试跑：拿到真实会话的压缩压力与潜在收益，再决定是否接管
+
 ## 仍未做（下一轮）
 
 - 多实例共享存储（Redis/Postgres）仍在 `attic/`；当前单进程
