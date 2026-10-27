@@ -21,6 +21,7 @@ which file versions are current and which earlier reads are stale. Pure stdlib.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import hashlib
 import os
@@ -56,6 +57,18 @@ CREATE TABLE IF NOT EXISTS decisions (
     status     TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id, status);
+CREATE TABLE IF NOT EXISTS symbols (
+    session_id TEXT NOT NULL,
+    path       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    line_start INTEGER NOT NULL,
+    line_end   INTEGER NOT NULL,
+    hash       TEXT NOT NULL,
+    ts         REAL NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'FRESH',
+    PRIMARY KEY (session_id, path, name, kind)
+);
 CREATE TABLE IF NOT EXISTS segments (
     session_id TEXT NOT NULL,
     path       TEXT NOT NULL,
@@ -164,6 +177,7 @@ class StateTable:
             return
         if any(t in name for t in ("read", "cat", "view", "open_file", "head", "tail")):
             self._record_read(session_id, path, content, now)
+            self._record_python_symbols(session_id, path, content, now)
 
     def _record_read(self, session_id: str, path: str, content: str, now: float) -> None:
         lines = content.splitlines()
@@ -284,6 +298,41 @@ class StateTable:
         with self._lock:
             return self._render_locked(session_id, max_files, max_decisions)
 
+    def _record_python_symbols(self, session_id: str, path: str, content: str, now: float) -> None:
+        """Phase 3: AST symbol-level freshness for Python files (stdlib ast)."""
+        if not path.endswith(".py"):
+            return
+        try:
+            tree = ast.parse(content)
+        except Exception:
+            return
+        stored = {(r[0], r[1]): r[2] for r in self._conn.execute(
+            "SELECT name, kind, hash FROM symbols WHERE session_id=? AND path=?",
+            (session_id, path),
+        ).fetchall()}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                kind = "class" if isinstance(node, ast.ClassDef) else "function"
+                body = ast.dump(node, include_attributes=False)
+                h = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+                status = "FRESH" if stored.get((node.name, kind)) == h else "STALE"
+                self._conn.execute(
+                    "INSERT INTO symbols(session_id, path, name, kind, line_start, line_end, hash, ts, status) "
+                    "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id, path, name, kind) DO UPDATE SET "
+                    "hash=excluded.hash, ts=excluded.ts, status=excluded.status, "
+                    "line_start=excluded.line_start, line_end=excluded.line_end",
+                    (session_id, path, node.name, kind, getattr(node, "lineno", 0),
+                     getattr(node, "end_lineno", 0) or 0, h, now, status),
+                )
+
+    def _symbol_stats(self, session_id: str, path: str) -> dict:
+        rows = self._conn.execute(
+            "SELECT name, kind, status FROM symbols WHERE session_id=? AND path=?",
+            (session_id, path),
+        ).fetchall()
+        stale = [r[0] for r in rows if r[2] == "STALE"]
+        return {"total": len(rows), "stale": stale}
+
     def _segment_stats(self, session_id: str, path: str) -> dict:
         rows = self._conn.execute(
             "SELECT chunk_idx, line_start, line_end, status FROM segments "
@@ -318,6 +367,16 @@ class StateTable:
             parts = []
             for path, op, ts, edits, reads in files:
                 clock = time.strftime("%H:%M", time.localtime(ts))
+                sym = self._symbol_stats(session_id, path)
+                if sym["total"]:
+                    if sym["stale"]:
+                        names = ", ".join(sym["stale"][:3])
+                        more = f" (+{len(sym['stale']) - 3} more)" if len(sym["stale"]) > 3 else ""
+                        note = f"; {len(sym['stale'])}/{sym['total']} symbols stale: {names}{more}"
+                    else:
+                        note = f"; all {sym['total']} symbols fresh"
+                    parts.append(f"{path} ({op} {clock}{note})")
+                    continue
                 seg = self._segment_stats(session_id, path)
                 if seg["total"] and seg["stale"]:
                     ranges = ", ".join(f"{a}-{b}" for a, b in seg["stale"][:3])

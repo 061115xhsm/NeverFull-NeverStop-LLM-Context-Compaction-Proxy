@@ -98,3 +98,26 @@ class TestAsyncCandidate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestStreamRestoreParser(unittest.TestCase):
+    def test_fragmented_tool_call(self):
+        from virtual_tool import parse_stream_restore_calls
+        raw = (
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+            '"function":{"name":"neverfull_restore_context","arguments":"{\\"fold_ref\\":\\"fold:x\\""}}]}}]}\n\n'
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+            '"function":{"arguments":",\\"limit\\":2}"}}]}}]}\n\n'
+            'data: [DONE]\n\n'
+        ).encode()
+        calls = parse_stream_restore_calls(raw)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["id"], "c1")
+        self.assertEqual(calls[0]["args"]["fold_ref"], "fold:x")
+        self.assertEqual(calls[0]["args"]["limit"], 2)
+
+    def test_non_virtual_tool_ignored(self):
+        from virtual_tool import parse_stream_restore_calls
+        raw = (b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1",'
+               b'"function":{"name":"read_file","arguments":"{}"}}]}}]}\n\ndata: [DONE]\n\n')
+        self.assertEqual(parse_stream_restore_calls(raw), [])

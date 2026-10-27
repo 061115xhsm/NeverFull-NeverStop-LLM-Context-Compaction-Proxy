@@ -92,3 +92,44 @@ def build_restore_messages(calls: list, archive, tenant: str = "default") -> lis
             "content": json.dumps(payload, ensure_ascii=False),
         })
     return messages
+
+
+def parse_stream_restore_calls(raw: bytes) -> list:
+    """Extract virtual-tool calls from an OpenAI-format SSE stream."""
+    calls = {}
+    try:
+        for line in raw.decode("utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line.startswith("data: "):
+                continue
+            payload = line[6:]
+            if payload == "[DONE]":
+                break
+            try:
+                evt = json.loads(payload)
+            except Exception:
+                continue
+            for ch in evt.get("choices", []) or []:
+                delta = ch.get("delta") or {}
+                for tc in delta.get("tool_calls") or []:
+                    idx = tc.get("index", 0)
+                    slot = calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if tc.get("id"):
+                        slot["id"] = tc["id"]
+                    fn = tc.get("function") or {}
+                    if fn.get("name"):
+                        slot["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        slot["arguments"] += fn["arguments"]
+    except Exception:
+        pass
+    out = []
+    for _, slot in sorted(calls.items()):
+        if slot["name"] != TOOL_NAME:
+            continue
+        try:
+            args = json.loads(slot["arguments"] or "{}")
+        except Exception:
+            args = {}
+        out.append({"id": slot["id"] or "", "args": args})
+    return out

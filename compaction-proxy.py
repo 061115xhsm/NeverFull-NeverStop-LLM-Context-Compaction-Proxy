@@ -226,11 +226,14 @@ except Exception:
     ENH_CACHE_ALIGN = False
 
 try:
-    from virtual_tool import TOOL_NAME as RESTORE_TOOL_NAME, inject_restore_tool, extract_restore_calls, build_restore_messages
+    from virtual_tool import (TOOL_NAME as RESTORE_TOOL_NAME, inject_restore_tool,
+                              extract_restore_calls, build_restore_messages,
+                              parse_stream_restore_calls)
     ENH_RESTORE = True
 except Exception:
     RESTORE_TOOL_NAME = ""
     inject_restore_tool = extract_restore_calls = build_restore_messages = None
+    parse_stream_restore_calls = None
     ENH_RESTORE = False
 
 try:
@@ -7144,7 +7147,84 @@ async def handle_streaming(
         return web.Response(status=upstream_resp.status, body=error_body, content_type="application/json")
 
     metrics.inc("request_success")
+    if ENH_RESTORE and RESTORE_TOOL and FOLDING_ENABLED and ENH_FOLDING and not need_anthropic_conversion:
+        return await _stream_with_restore(request, upstream_resp, body, clean_headers, session,
+                                          provider, original_model, t_stream_start)
     return await _stream_sse_response(request, upstream_resp, need_anthropic_conversion=need_anthropic_conversion, model=original_model, t_start=t_stream_start)
+
+
+async def _stream_with_restore(request: web.Request, upstream_resp, body: dict, headers: dict,
+                               session, provider, model: str, t_start: float) -> web.StreamResponse:
+    """Relay an OpenAI SSE stream, intercepting the virtual restore tool."""
+    stream_resp = web.StreamResponse(status=200, headers={
+        "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive"})
+    try:
+        await stream_resp.prepare(request)
+    except Exception as e:
+        logger.warning(f"Cannot prepare restore stream ({e})")
+        upstream_resp.close()
+        return stream_resp
+
+    buffered, sniffing, restore, first = [], True, False, True
+    try:
+        async for chunk in upstream_resp.content.iter_any():
+            if first:
+                metrics.observe("upstream_ttft_ms", (time.monotonic() - t_start) * 1000)
+                first = False
+            if sniffing:
+                buffered.append(chunk)
+                joined = b"".join(buffered)
+                if b"neverfull_restore_context" in joined:
+                    restore = True
+                    sniffing = False
+                elif b'"content":"' in joined or len(joined) > 8192:
+                    await stream_resp.write(joined)
+                    buffered.clear()
+                    sniffing = False
+                continue
+            if restore:
+                buffered.append(chunk)
+                continue
+            await stream_resp.write(chunk)
+
+        if restore:
+            await stream_resp.write(b": processing-context-restore\n\n")
+            raw = b"".join(buffered)
+            calls = parse_stream_restore_calls(raw) if parse_stream_restore_calls else []
+            if calls:
+                assistant_calls = [{"id": c["id"], "type": "function",
+                                    "function": {"name": RESTORE_TOOL_NAME,
+                                                 "arguments": json.dumps(c["args"], ensure_ascii=False)}}
+                                   for c in calls]
+                body.setdefault("messages", []).append({"role": "assistant", "content": None,
+                                                        "tool_calls": assistant_calls})
+                body["messages"].extend(build_restore_messages(
+                    calls, fold_archive, current_tenant() if ENH_TENANT else "default"))
+                metrics.inc("stream_restore_detected")
+                path = provider.get_forward_path("/chat/completions") if provider else "/chat/completions"
+                status, resp_body, _ = await forward_request(
+                    session, path, "POST", headers, json.dumps(body).encode("utf-8"), provider=provider)
+                if status == 200:
+                    await stream_resp.write(resp_body)
+                    metrics.inc("stream_restore_followup")
+                else:
+                    metrics.inc("stream_restore_failed")
+                    await stream_resp.write(b"data: {\"error\": {\"message\": \"restore follow-up failed\"}}\n\n")
+            else:
+                await stream_resp.write(raw)
+        await stream_resp.write_eof()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"stream restore error: {e}")
+        try:
+            await stream_resp.write_eof()
+        except Exception:
+            pass
+    finally:
+        try:
+            upstream_resp.close()
+        except Exception:
+            pass
+    return stream_resp
 
 
 async def _stream_sse_response(

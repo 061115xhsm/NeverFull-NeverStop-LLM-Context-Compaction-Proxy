@@ -68,10 +68,10 @@
 |---|---|---|
 | P0 计量 | usage 缓存字段解析（OpenAI/Anthropic/Gemini）、有效成本（读 0.1x / 写 1.25x）、TTFT、命中率计数 | 单测 + `/health.upstream_cache` |
 | P1 布局 | 尾部瞬态状态帧；append-only checkpoint（SQLite+PG）；工具确定性排序；`prompt_cache_key`；Anthropic 4 断点 | 单测 + 缓存前缀稳定性 |
-| P2 异步/展开 | 软 65%/硬 92% 双水位线；后台候选压缩 + 证据/计划 judge；热替换；`neverfull_restore_context` 虚拟工具注入 + 非流式拦截回填 + 内部重发 | 单测 + 虚拟工具测试 |
-| P3 状态/存储 | 文件分块哈希（50 行/块，只标过期区段）；PG FoldArchive；信封加密（租户 DEK + KEK，rotate 只重包 DEK）；Redis 共享策略状态；`neverfull/` 包门面 | 113 项测试（含 8 项真 PG） |
+| P2 异步/展开 | 软 65%/硬 92% 双水位线；后台候选压缩 + 证据/计划 judge；热替换；`neverfull_restore_context` 虚拟工具注入 + 非流式/流式拦截回填 + 内部重发（流式带心跳） | 单测 + 流式解析测试 |
+| P3 状态/存储 | Python AST 符号级哈希（函数/类，stdlib ast）+ 50 行分块回退；PG FoldArchive；信封加密（租户 DEK + KEK，rotate 只重包 DEK）；Redis 共享策略状态；`neverfull/` 包门面 | 117 项测试（含 8 项真 PG） |
 
-**未做/后续**：Tree-sitter AST 符号级（当前为行区间哈希）、Hybrid LinUCB（当前 UCB+延迟奖励未接）、S3/MinIO 分层存储、流式虚拟工具拦截（当前非流式）。
+**未做/后续**：Tree-sitter 多语言 AST（当前 Python 用 stdlib ast，其他语言用行块哈希）、Hybrid LinUCB、S3/MinIO 分层存储、Anthropic 流式虚拟工具拦截。
 
 ## 仍未做（下一轮）
 
