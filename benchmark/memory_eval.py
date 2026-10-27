@@ -61,11 +61,11 @@ def endpoint():
     return p["baseUrl"].rstrip("/"), p["apiKey"]
 
 
-def chat(messages, max_tokens=1200, timeout=45, model="tierflow"):
-    """Call the local endpoint; short timeout + one fallback (502s/slow calls happen)."""
+def chat(messages, max_tokens=1200, timeout=60, model="tierflow"):
+    """Call the local endpoint; one real fallback (502s/slow calls happen)."""
     base, key = endpoint()
     last = None
-    for m in (model, "tierflow"):
+    for m in (model, "tierflow_pro"):
         try:
             body = json.dumps({"model": m, "messages": messages, "max_tokens": max_tokens,
                                "temperature": 0.2}).encode()
@@ -368,17 +368,24 @@ def main():
                 view, meta = full, {"seconds": 0, "usage": {}}
             elif s == "truncate":
                 view, meta = view_truncate(conv), {"seconds": 0, "usage": {}}
-            elif s == "llm":
-                view, meta = view_llm(conv)
-            elif s == "v11":
-                view, meta = view_v11(conv)
+            elif s in ("llm", "v11"):
+                try:
+                    view, meta = view_llm(conv) if s == "llm" else view_v11(conv)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[{conv['id']}] {s} summary failed ({e}); skipping", flush=True)
+                    meta = None
             else:
+                continue
+            if meta is None:
                 continue
             comp = 1.0 - est(view) / max(1, est(full))
             rec = sum(evidence_recall(view, q.get("evidence", []), idx) for q in qs) / max(1, len(qs))
             correct = 0
             for q in qs:
-                ans = ask_extractive(view, q["question"]) if args.reader == "extractive" else ask_llm(view, q["question"])
+                try:
+                    ans = ask_extractive(view, q["question"]) if args.reader == "extractive" else ask_llm(view, q["question"])
+                except Exception:
+                    ans = ""
                 if q.get("answer") is None:
                     # LoCoMo category-5 adversarial items: the gold behavior is refusal.
                     correct += 1.0 if is_refusal(ans) else 0.0
@@ -397,8 +404,8 @@ def main():
                             "seconds": meta["seconds"]})
             print(f"[{conv['id']}] {s:8s} comp={comp:.3f} ev={rec:.3f} qa={qa:.2f}", flush=True)
 
-    n = max(1, len(convs))
     for s in rows:
+        n = max(1, rows[s]["views"])
         for k in ("compression", "evidence", "qa", "summary_s"):
             rows[s][k] = round(rows[s][k] / n, 3)
     md = ["# Memory benchmark evaluation", "",

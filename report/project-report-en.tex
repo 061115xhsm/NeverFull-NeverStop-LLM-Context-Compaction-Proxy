@@ -296,20 +296,20 @@ Latency: OpenClaw 18.3 s, Hermes 67.7 s, V11 25.5 s. All three preserved decisio
 \subsection{Paired Evaluation}
 \texttt{benchmark/paired\_eval.py} builds full, truncate, summary, and fold views of the same conversation and measures compression and evidence recall against identical probes. On synthetic data the fold view reaches 92.2\% compression at 1.000 evidence recall; truncation reaches 65.0\% at 1.000 (because answers sit at the tail), illustrating that the metric distinguishes \emph{what survived}, not just length.
 
-\subsection{Supplementary: LoCoMo Memory Benchmark}
-Beyond the coding session, we evaluated one long LoCoMo conversation (conv-26, five category-stratified questions). With the same summarizer, a generic summary reaches 98.1\% compression but retains only 0.400 evidence; V11 reaches 92.0\% compression and restores evidence recall to 0.900 (on par with 35\% truncation), with QA 0.200. Full-context QA is only 0.600, so the local reader's temporal reasoning is the current ceiling; this run validates evidence retention, not reader capability. Details: \texttt{research/EVAL-2026-10-26.md}.
+\subsection{Supplementary: LoCoMo Memory Benchmark (4 conversations)}
+Beyond the coding session, we evaluated four long LoCoMo conversations (four category-stratified questions each, 16 total). With the same summarizer, a generic summary reaches 98.0\% compression but retains only 0.199 evidence; V11 reaches 92.1\% compression and retains 0.919 (on par with 65\% truncation), with QA 0.167 (full-context ceiling 0.500; the local reader's temporal reasoning is the bottleneck). conv-41 summaries timed out twice and were skipped (resilience), so llm/v11 rows have views=3. Details: \texttt{research/EVAL-2026-10-26.md}.
 
 \begin{table}[htbp]
 \centering
-\caption{Supplementary LoCoMo run (conv-26, 5 questions)}
+\caption{Supplementary LoCoMo evaluation (4 conversations x 4 questions)}
 \begin{tabular}{lcccc}
 \toprule
-Strategy & Compression & Evidence & QA & Summary time \\
+Strategy & Compression & Evidence & QA & Summary time/conv \\
 \midrule
-full & 0.000 & 1.000 & 0.600 & 0 s \\
-truncate & 0.650 & 0.900 & 0.200 & 0 s \\
-generic LLM summary & 0.981 & 0.400 & 0.000 & 9.4 s \\
-\textbf{V11 fold} & \textbf{0.920} & \textbf{0.900} & 0.200 & 11.3 s \\
+full & 0.000 & 0.979 & 0.500 & 0 s \\
+truncate & 0.650 & 0.948 & 0.125 & 0 s \\
+generic LLM summary & 0.980 & 0.199 & 0.083 & 11.3 s \\
+\textbf{V11 fold} & \textbf{0.921} & \textbf{0.919} & \textbf{0.167} & 16.0 s \\
 \bottomrule
 \end{tabular}
 \end{table}
