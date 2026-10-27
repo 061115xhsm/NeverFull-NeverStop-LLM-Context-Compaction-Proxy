@@ -258,7 +258,7 @@ def view_llm(conv):
     return out, {"seconds": round(time.monotonic() - t0, 2), "usage": usage}
 
 
-def view_v11(conv):
+def view_v11(conv, ablate=None):
     t0 = time.monotonic()
     msgs = [{"role": "user", "content": session_text(s)} for s in conv["sessions"]]
     digest = build_fold_digest(msgs, commitments=[])
@@ -272,17 +272,21 @@ def view_v11(conv):
         "[NOTE] Resolve relative dates with the session headers; recent session kept verbatim.",
         "</state_snapshot>",
     ])
+    ablate = ablate or set()
     facts = extract_facts(full_text(conv))
+    prompt = GENERIC_PROMPT if "sections" in ablate else NF_PROMPT
     summary, usage = chat([
-        {"role": "system", "content": NF_PROMPT},
+        {"role": "system", "content": prompt},
         {"role": "user", "content": full_text(conv)[:120000]},
     ], max_tokens=1500)
-    evidence = "[EVIDENCE] " + "; ".join(facts) if facts else ""
-    salient = salient_lines(full_text(conv))
+    evidence = ("[EVIDENCE] " + "; ".join(facts)) if (facts and "facts" not in ablate) else ""
+    salient = salient_lines(full_text(conv)) if "salient" not in ablate else []
     salient_block = "[SALIENT LINES]\n" + "\n".join(f"- {l}" for l in salient) if salient else ""
+    tail = ("" if "last_session" in ablate else
+            "\n\n--- most recent session ---\n" + _last_session(conv))
     out = (snapshot + "\n\n" + fold + ("\n" + evidence if evidence else "")
            + ("\n\n" + salient_block if salient_block else "")
-           + "\n\n" + summary.strip() + "\n\n--- most recent session ---\n" + _last_session(conv))
+           + "\n\n" + summary.strip() + tail)
     return out, {"seconds": round(time.monotonic() - t0, 2), "usage": usage}
 
 
@@ -300,7 +304,7 @@ def ask_extractive(view: str, question: str) -> str:
     return best[:300]
 
 
-def ask_llm(view: str, question: str) -> str:
+def ask_llm(view: str, question: str, model: str = "tierflow") -> str:
     ans, _ = chat([
         {"role": "system", "content": (
             "Answer with the shortest exact phrase from the context. "
@@ -308,7 +312,7 @@ def ask_llm(view: str, question: str) -> str:
             "[Session N - date] header of the session where they appear. If unknown, say unknown."
         )},
         {"role": "user", "content": f"CONTEXT:\n{view[:60000]}\n\nQUESTION: {question}"},
-    ], max_tokens=300, model="tierflow")
+    ], max_tokens=300, model=model)
     return ans.strip()
 
 
@@ -348,16 +352,22 @@ def main():
     ap.add_argument("--convs", type=int, default=3)
     ap.add_argument("--questions", type=int, default=6)
     ap.add_argument("--reader", choices=["extractive", "llm"], default="extractive")
+    ap.add_argument("--reader-model", default="tierflow")
+    ap.add_argument("--ablate", default="", help="comma list: facts,salient,sections,last_session")
+    ap.add_argument("--tag", default="run")
+    ap.add_argument("--outdir", default="")
     ap.add_argument("--strategies", default="full,truncate,llm,v11")
     ap.add_argument("--json")
     ap.add_argument("--markdown")
     args = ap.parse_args()
 
+    ablate = {x.strip() for x in args.ablate.split(",") if x.strip()}
     convs = load_locomo(args.data)[: args.convs] if args.data else synthetic()
     strategies = args.strategies.split(",")
     rows = {s: {"views": 0, "compression": 0.0, "evidence": 0.0, "qa": 0.0,
                 "summary_s": 0.0, "cost": 0} for s in strategies}
     details = []
+    qa_details = []
 
     for conv in convs:
         idx = dia_index(conv)
@@ -370,7 +380,7 @@ def main():
                 view, meta = view_truncate(conv), {"seconds": 0, "usage": {}}
             elif s in ("llm", "v11"):
                 try:
-                    view, meta = view_llm(conv) if s == "llm" else view_v11(conv)
+                    view, meta = view_llm(conv) if s == "llm" else view_v11(conv, ablate)
                 except Exception as e:  # noqa: BLE001
                     print(f"[{conv['id']}] {s} summary failed ({e}); skipping", flush=True)
                     meta = None
@@ -383,9 +393,14 @@ def main():
             correct = 0
             for q in qs:
                 try:
-                    ans = ask_extractive(view, q["question"]) if args.reader == "extractive" else ask_llm(view, q["question"])
+                    ans = ask_extractive(view, q["question"]) if args.reader == "extractive" else ask_llm(view, q["question"], model=args.reader_model)
                 except Exception:
                     ans = ""
+                qa_details.append({
+                    "conv": conv["id"], "strategy": s, "question": q["question"],
+                    "expected": q.get("answer"), "answer": ans,
+                    "evidence": q.get("evidence", []),
+                })
                 if q.get("answer") is None:
                     # LoCoMo category-5 adversarial items: the gold behavior is refusal.
                     correct += 1.0 if is_refusal(ans) else 0.0
@@ -403,6 +418,15 @@ def main():
                             "evidence": round(rec, 3), "qa": round(qa, 3), "cost": cost,
                             "seconds": meta["seconds"]})
             print(f"[{conv['id']}] {s:8s} comp={comp:.3f} ev={rec:.3f} qa={qa:.2f}", flush=True)
+            if args.outdir:
+                try:
+                    _d = Path(args.outdir); _d.mkdir(parents=True, exist_ok=True)
+                    _partial = {"tag": args.tag, "partial": True, "summary": rows,
+                                "details": details, "qa_details": qa_details[-200:]}
+                    (_d / f"{args.tag}.partial.json").write_text(
+                        json.dumps(_partial, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
 
     for s in rows:
         n = max(1, rows[s]["views"])
@@ -416,9 +440,23 @@ def main():
         md.append(f"| {s} | {r['compression']:.3f} | {r['evidence']:.3f} | {r['qa']:.3f} | {r['summary_s']:.1f} | {r['cost']} |")
     md += ["", "Evidence recall = share of gold dia_ids whose content survives; QA acc = exact/F1>=0.5 against gold answers."]
     print("\n".join(md))
-    out = {"conversations": len(convs), "reader": args.reader, "summary": rows, "details": details}
+    import datetime, subprocess
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
+    except Exception:
+        commit = ""
+    out = {
+        "tag": args.tag, "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+        "commit": commit, "dataset": args.data or "synthetic",
+        "conversations": len(convs), "questions_per_conv": args.questions,
+        "reader": args.reader, "reader_model": args.reader_model, "ablate": sorted(ablate),
+        "summary": rows, "details": details, "qa_details": qa_details,
+    }
     if args.json:
         Path(args.json).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.outdir:
+        d = Path(args.outdir); d.mkdir(parents=True, exist_ok=True)
+        (d / f"{args.tag}.json").write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.markdown:
         Path(args.markdown).write_text("\n".join(md) + "\n", encoding="utf-8")
     return 0

@@ -1,0 +1,126 @@
+{
+  "model": "tierflow",
+  "prefix_chars": 30000,
+  "turns": 5,
+  "samples": {
+    "head": [
+      {
+        "turn": 1,
+        "prompt_tokens": 6726,
+        "cached_tokens": 0,
+        "latency_s": 1.359
+      },
+      {
+        "turn": 2,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 2.008
+      },
+      {
+        "turn": 3,
+        "prompt_tokens": 6745,
+        "cached_tokens": 0,
+        "latency_s": 2.4
+      },
+      {
+        "turn": 4,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 1.237
+      },
+      {
+        "turn": 5,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 2.618
+      }
+    ],
+    "tail": [
+      {
+        "turn": 1,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 1.156
+      },
+      {
+        "turn": 2,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 1.197
+      },
+      {
+        "turn": 3,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 1.712
+      },
+      {
+        "turn": 4,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 1.154
+      },
+      {
+        "turn": 5,
+        "prompt_tokens": 6726,
+        "cached_tokens": 6656,
+        "latency_s": 2.321
+      }
+    ],
+    "control": [
+      {
+        "turn": 1,
+        "prompt_tokens": 6702,
+        "cached_tokens": 6656,
+        "latency_s": 1.811
+      },
+      {
+        "turn": 2,
+        "prompt_tokens": 6702,
+        "cached_tokens": 6656,
+        "latency_s": 1.539
+      },
+      {
+        "turn": 3,
+        "prompt_tokens": 6725,
+        "cached_tokens": 0,
+        "latency_s": 1.419
+      },
+      {
+        "turn": 4,
+        "prompt_tokens": 6702,
+        "cached_tokens": 6656,
+        "latency_s": 1.317
+      },
+      {
+        "turn": 5,
+        "prompt_tokens": 6702,
+        "cached_tokens": 6656,
+        "latency_s": 1.569
+      }
+    ]
+  },
+  "summary": {
+    "head": {
+      "turns": 5,
+      "avg_prompt_tokens": 6729.8,
+      "avg_cached_tokens": 3993.6,
+      "cache_hit_ratio": 0.594,
+      "avg_latency_s": 1.924
+    },
+    "tail": {
+      "turns": 5,
+      "avg_prompt_tokens": 6726,
+      "avg_cached_tokens": 6656,
+      "cache_hit_ratio": 0.99,
+      "avg_latency_s": 1.508
+    },
+    "control": {
+      "turns": 5,
+      "avg_prompt_tokens": 6706.6,
+      "avg_cached_tokens": 5324.8,
+      "cache_hit_ratio": 0.795,
+      "avg_latency_s": 1.531
+    }
+  }
+}

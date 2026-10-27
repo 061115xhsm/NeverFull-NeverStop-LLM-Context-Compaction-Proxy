@@ -1,0 +1,166 @@
+{
+  "conversations": 4,
+  "reader": "llm",
+  "summary": {
+    "full": {
+      "views": 4,
+      "compression": 0.0,
+      "evidence": 0.979,
+      "qa": 0.5,
+      "summary_s": 0.0,
+      "cost": 0
+    },
+    "truncate": {
+      "views": 4,
+      "compression": 0.65,
+      "evidence": 0.948,
+      "qa": 0.125,
+      "summary_s": 0.0,
+      "cost": 0
+    },
+    "llm": {
+      "views": 3,
+      "compression": 0.98,
+      "evidence": 0.199,
+      "qa": 0.083,
+      "summary_s": 11.267,
+      "cost": 53414
+    },
+    "v11": {
+      "views": 3,
+      "compression": 0.921,
+      "evidence": 0.919,
+      "qa": 0.167,
+      "summary_s": 15.993,
+      "cost": 54557
+    }
+  },
+  "details": [
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.75,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 0.875,
+      "qa": 0.0,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "llm",
+      "compression": 0.981,
+      "evidence": 0.25,
+      "qa": 0.0,
+      "cost": 17166,
+      "seconds": 10.14
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "compression": 0.92,
+      "evidence": 0.875,
+      "qa": 0.25,
+      "cost": 17547,
+      "seconds": 16.08
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.75,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 1.0,
+      "qa": 0.0,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "llm",
+      "compression": 0.975,
+      "evidence": 0.312,
+      "qa": 0.25,
+      "cost": 14035,
+      "seconds": 12.29
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "v11",
+      "compression": 0.906,
+      "evidence": 1.0,
+      "qa": 0.25,
+      "cost": 14416,
+      "seconds": 14.82
+    },
+    {
+      "conv": "conv-41",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.5,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-41",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 1.0,
+      "qa": 0.5,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-42",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 0.917,
+      "qa": 0.0,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-42",
+      "strategy": "truncate",
+      "compression": 0.65,
+      "evidence": 0.917,
+      "qa": 0.0,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-42",
+      "strategy": "llm",
+      "compression": 0.985,
+      "evidence": 0.036,
+      "qa": 0.0,
+      "cost": 22213,
+      "seconds": 11.37
+    },
+    {
+      "conv": "conv-42",
+      "strategy": "v11",
+      "compression": 0.937,
+      "evidence": 0.881,
+      "qa": 0.0,
+      "cost": 22594,
+      "seconds": 17.08
+    }
+  ]
+}
