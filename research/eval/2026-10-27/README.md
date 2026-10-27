@@ -47,10 +47,10 @@ and drops to 0.594.
 
 | variant | ablated component | views | compression | evidence | QA |
 |---|---|---|---|---|---|
-| ablate_facts | facts | 2 | 0.459 | 0.459 | 0.084 |
-| ablate_salient | salient | 2 | 0.478 | 0.188 | 0.000 |
-| ablate_sections | sections | 2 | 0.457 | 0.459 | 0.084 |
-| ablate_last_session | last_session | 2 | 0.468 | 0.375 | 0.084 |
+| ablate_facts | facts | 2 | 0.917 | 0.917 | 0.167 |
+| ablate_salient | salient | 2 | 0.956 | 0.375 | 0.000 |
+| ablate_sections | sections | 2 | 0.913 | 0.917 | 0.167 |
+| ablate_last_session | last_session | 2 | 0.935 | 0.750 | 0.167 |
 
 Key signal: removing verbatim **salient lines** collapses evidence recall to 0.375;
 removing the last-session verbatim drops it to 0.750; removing the facts list or section
