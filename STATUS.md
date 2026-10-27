@@ -1,4 +1,4 @@
-# STATUS — 2026-10-26 (V11, final for this pass)
+# STATUS — 2026-10-27 (V12)
 
 ## 开关
 

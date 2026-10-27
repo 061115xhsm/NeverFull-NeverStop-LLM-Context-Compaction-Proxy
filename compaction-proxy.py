@@ -7687,7 +7687,7 @@ async def handle_health(request: web.Request) -> web.Response:
         sem_mem_stats = {k: len(v) for k, v in semantic_memory._knowledge.items()}
     return web.json_response({
         "status": "ok",
-        "version": "V11",
+        "version": "V12",
         "folding": {
             "enabled": bool(FOLDING_ENABLED and ENH_FOLDING),
             "archive": fold_archive.stats() if fold_archive else None,
@@ -7733,7 +7733,7 @@ async def handle_health(request: web.Request) -> web.Response:
             "cache_write_tokens": metrics.get("upstream_cache_write_tokens_total"),
             "hit_ratio_avg": round(
                 metrics.get("upstream_cache_hit_ratio_sum")
-                / max(1.0, metrics.get("upstream_cache_hit_ratio_n", 1)), 3),
+                / max(1.0, metrics.get("upstream_cache_hit_ratio_n")), 3),
         },
         "restore_tool": {
             "enabled": bool(RESTORE_TOOL and ENH_RESTORE and FOLDING_ENABLED),
