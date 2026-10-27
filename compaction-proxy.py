@@ -265,6 +265,13 @@ except Exception:
     PostgresSessionStore = None
     ENH_PG_STORE = False
 
+try:
+    from folding_pg import PgFoldArchive
+    ENH_PG_FOLD = True
+except Exception:
+    PgFoldArchive = None
+    ENH_PG_FOLD = False
+
 # ── 配置 ──────────────────────────────────────────────────────────────
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = int(os.environ.get("COMPACTION_PROXY_PORT", "8198"))
@@ -8494,7 +8501,7 @@ app.on_cleanup.append(on_cleanup)
 
 def main():
     global session_store, user_profile, hook_manager, compression_engine
-    global skill_registry, skill_controller
+    global skill_registry, skill_controller, fold_archive
 
     # V5: Initialize new components
     if SHARED_STORAGE == "postgres" and PG_DSN:
@@ -8525,6 +8532,15 @@ def main():
     else:
         skill_registry = SkillRegistry(session_store=session_store)  # Still init for /skills API
         logger.info("MemSkill V7: DISABLED (set COMPACTION_PROXY_MEMSKILL=1 to enable)")
+
+    # V12 Phase 3: shared fold archive in PostgreSQL when configured
+    if SHARED_STORAGE == "postgres" and PG_DSN:
+        if ENH_PG_FOLD and PgFoldArchive is not None:
+            try:
+                fold_archive = PgFoldArchive(PG_DSN, encrypt=FOLD_ENCRYPT)
+                logger.info("FoldArchive: PostgreSQL shared archive enabled")
+            except Exception as e:
+                logger.warning(f"PG fold archive unavailable ({e}); staying on SQLite")
 
     # V5: Restore ARC log from SQLite
     try:

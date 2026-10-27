@@ -37,8 +37,9 @@ class TestKeyRotation(unittest.TestCase):
         raw1 = archive._conn.execute("SELECT payload FROM folds WHERE ref=?", (ref,)).fetchone()[0]
         self.assertEqual(archive.rotate_key(), 1)
         raw2 = archive._conn.execute("SELECT payload FROM folds WHERE ref=?", (ref,)).fetchone()[0]
-        self.assertNotEqual(raw1, raw2)
-        self.assertTrue(raw2.startswith("enc:v1:"))
+        # envelope rotation rewraps DEKs only; payload bytes stay stable
+        self.assertEqual(raw1, raw2)
+        self.assertTrue(raw2.startswith("env:v1:") or raw2.startswith("enc:v1:"))
         self.assertEqual(archive.get(ref)["messages"], msgs)
         archive.close()
 

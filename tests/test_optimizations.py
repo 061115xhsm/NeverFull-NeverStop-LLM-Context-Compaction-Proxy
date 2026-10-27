@@ -102,7 +102,7 @@ class TestEncryption(unittest.TestCase):
         msgs = [{"role": "user", "content": "secret /tmp/a.py"}]
         ref = archive.put("s1", "compaction", msgs)
         raw = archive._conn.execute("SELECT payload FROM folds WHERE ref=?", (ref,)).fetchone()[0]
-        self.assertTrue(raw.startswith("enc:v1:"))
+        self.assertTrue(raw.startswith("env:v1:") or raw.startswith("enc:v1:"))
         self.assertEqual(archive.get(ref)["messages"], msgs)
         archive.close()
 

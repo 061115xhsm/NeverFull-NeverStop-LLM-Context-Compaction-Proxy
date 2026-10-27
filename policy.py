@@ -104,6 +104,19 @@ class ContextPolicy:
         self._load()
 
     def _load(self) -> None:
+        redis_url = os.environ.get("COMPACTION_PROXY_REDIS_URL", "")
+        if redis_url:
+            try:
+                import redis
+                client = redis.Redis.from_url(redis_url, decode_responses=True)
+                blob = client.get("nf:policy:state")
+                self._data = json.loads(blob) if blob else {}
+                if not isinstance(self._data, dict):
+                    self._data = {}
+                self._redis = client
+                return
+            except Exception:
+                self._redis = None
         try:
             self._data = json.loads(self.path.read_text(encoding="utf-8"))
             if not isinstance(self._data, dict):
@@ -112,6 +125,12 @@ class ContextPolicy:
             self._data = {}
 
     def _save(self) -> None:
+        if getattr(self, "_redis", None):
+            try:
+                self._redis.set("nf:policy:state", json.dumps(self._data, ensure_ascii=False))
+                return
+            except Exception:
+                pass
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")

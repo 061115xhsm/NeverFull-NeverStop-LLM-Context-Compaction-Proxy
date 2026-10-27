@@ -24,6 +24,8 @@
 
 **V11 (2026-10) core:** reversible **context folding** with an addressable archive, **commitment / identifier contracts**, deterministic **evidence probes**, optional per-model token calibration and a UCB compaction policy. Earlier heuristic layers (ARC citations, AFM fidelity tiers, submodular selection, dual-layer compression) remain available behind their existing flags.
 
+> **V12 (2026-10):** Phase 0--3 of the advisor's plan is implemented: cache-usage metering, tail state frame + append-only checkpoints, 65%/92% async compaction with a trajectory judge, virtual `neverfull_restore_context` tool, chunk-level state invalidation, PostgreSQL fold archive, envelope encryption and Redis policy state. Details: [STATUS.md](STATUS.md).
+
 ---
 
 ## ✨ Feature Highlights

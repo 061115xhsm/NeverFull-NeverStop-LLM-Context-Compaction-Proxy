@@ -353,6 +353,9 @@ fba1a7a  PostgreSQL SessionStore, quotas, rotate-key endpoint
 
 CI runs Python 3.11--3.13 with a Postgres service, byte-compiles entrypoints, runs 88 tests, and executes the paired evaluation. Dependencies are minimal: only \texttt{aiohttp} at runtime; Postgres, Redis, and semantic models are optional.
 
+\section{V12 Implementation Status (2026-10-27)}
+Following the advisor's plan, Phases 0--3 are implemented: cache-usage metering (OpenAI/Anthropic/Gemini cached/read/write fields, effective cost, TTFT); context topology inversion (trailing state frame, append-only checkpoints, deterministic tool ordering, \texttt{prompt\_cache\_key}, Anthropic 4 breakpoints); dual-watermark async compaction (soft 65\% schedules a background candidate, hard 92\% synchronous fallback, evidence+plan judge then hot-swap); transparent \texttt{neverfull\_restore\_context} tool injection with non-streaming interception; chunk-level file hashing (50 lines/chunk, only stale ranges marked); PostgreSQL fold archive; envelope encryption (per-tenant DEK under KEK, rotation rewraps DEKs only); Redis shared policy state; \texttt{neverfull/} package facade. Tests: 113 (8 real PostgreSQL). Tree-sitter AST, Hybrid LinUCB, S3/MinIO, and streaming virtual-tool interception remain.
+
 \section{Future Work}
 \begin{enumerate}
   \item \textbf{Scale evaluation}: add LongMemEval, LoCoMo, and Compact-Bench to CI with a real LLM reader and multi-task paired sets.

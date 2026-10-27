@@ -30,6 +30,7 @@ Pure standard library; no dependency on the proxy module (safe to unit test).
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -47,6 +48,10 @@ DEFAULT_DB = os.environ.get(
 )
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS tenant_deks (
+    tenant_id   TEXT PRIMARY KEY,
+    wrapped_dek TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS folds (
     ref         TEXT PRIMARY KEY,
     tenant_id   TEXT NOT NULL DEFAULT 'default',
@@ -88,6 +93,114 @@ def _approx_tokens(messages: list) -> int:
     return int(cjk / 1.5 + other / 4.0)
 
 
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    _HAS_AESGCM = True
+except Exception:
+    AESGCM = None
+    _HAS_AESGCM = False
+
+
+class EnvelopeCipher:
+    """Per-tenant DEK encrypted under a local KEK (AES-256-GCM).
+
+    Key rotation rewraps DEKs only; folded payloads never re-encrypt.
+    """
+
+    def __init__(self, kek_path: str | os.PathLike) -> None:
+        if not _HAS_AESGCM:
+            raise RuntimeError("cryptography is required for envelope encryption")
+        self.kek_path = Path(kek_path)
+        self._conn = None
+        self._dek_cache = {}
+        self._runner = None
+        self._commit_hook = None
+        self._kek = self._load_or_create_kek()
+
+    def set_runner(self, runner, commit=None) -> None:
+        """runner(conn, sql, params) -> rows(list of tuples)"""
+        self._runner = runner
+        self._commit_hook = commit
+
+    def _load_or_create_kek(self) -> bytes:
+        if self.kek_path.exists():
+            return base64.b64decode(self.kek_path.read_bytes().strip())
+        key = AESGCM.generate_key(bit_length=256)
+        self.kek_path.parent.mkdir(parents=True, exist_ok=True)
+        self.kek_path.write_bytes(base64.b64encode(key))
+        try:
+            os.chmod(self.kek_path, 0o600)
+        except OSError:
+            pass
+        return key
+
+    def _aes(self) -> "AESGCM":
+        return AESGCM(self._kek)
+
+    def encrypt_blob(self, tenant: str, plaintext: bytes) -> bytes:
+        dek = AESGCM(self._dek_cache_get(tenant))
+        nonce = os.urandom(12)
+        return nonce + dek.encrypt(nonce, plaintext, tenant.encode("utf-8")[:32])
+
+    def decrypt_blob(self, tenant: str, blob: bytes) -> bytes:
+        dek = AESGCM(self._dek_cache_get(tenant))
+        return dek.decrypt(blob[:12], blob[12:], tenant.encode("utf-8")[:32])
+
+    def _dek_cache_get(self, tenant: str) -> bytes:
+        if tenant not in getattr(self, "_dek_cache", {}):
+            if not hasattr(self, "_dek_cache"):
+                self._dek_cache = {}
+            self._dek_cache[tenant] = self.get_dek(tenant, self._conn)
+        return self._dek_cache[tenant]
+
+    def _wrap(self, dek: bytes) -> str:
+        nonce = os.urandom(12)
+        ct = self._aes().encrypt(nonce, dek, b"nf-dek")
+        return base64.b64encode(nonce + ct).decode("ascii")
+
+    def _unwrap(self, blob: str) -> bytes:
+        raw = base64.b64decode(blob)
+        return AESGCM(self._kek).decrypt(raw[:12], raw[12:], b"nf-dek")
+
+    def get_dek(self, tenant: str, conn) -> bytes:
+        row = self._run_row(conn, "SELECT wrapped_dek FROM tenant_deks WHERE tenant_id=?", (tenant,))
+        if row:
+            return self._unwrap(row[0])
+        dek = os.urandom(32)
+        self._run_row(conn, "INSERT OR REPLACE INTO tenant_deks(tenant_id, wrapped_dek) VALUES (?,?)",
+                      (tenant, self._wrap(dek)))
+        self._commit(conn)
+        return dek
+
+    def rotate_kek(self, conn) -> int:
+        old = self._kek
+        new = AESGCM.generate_key(bit_length=256)
+        rows = self._run_rows(conn, "SELECT tenant_id, wrapped_dek FROM tenant_deks")
+        self._kek = new
+        for tenant, blob in rows:
+            dek = AESGCM(old).decrypt(base64.b64decode(blob)[:12], base64.b64decode(blob)[12:], b"nf-dek")
+            self._run_row(conn, "UPDATE tenant_deks SET wrapped_dek=? WHERE tenant_id=?", (self._wrap(dek), tenant))
+        self._commit(conn)
+        self.kek_path.write_bytes(base64.b64encode(new))
+        try:
+            os.chmod(self.kek_path, 0o600)
+        except OSError:
+            pass
+        return len(rows)
+
+    def _run_row(self, conn, sql, params=None):
+        row = self._runner(conn, sql, params)
+        return row[0] if row else None
+
+    def _run_rows(self, conn, sql, params=None):
+        return self._runner(conn, sql, params)
+
+    def _commit(self, conn) -> None:
+        commit = getattr(self, "_commit_hook", None)
+        if commit:
+            commit()
+
+
 class FoldArchive:
     """Verbatim, addressable store for folded history (SQLite, WAL)."""
 
@@ -96,8 +209,8 @@ class FoldArchive:
         self.path = Path(path or DEFAULT_DB).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fernet = None
-        if encrypt:
-            self._init_encryption(key_path)
+        self._cipher = None
+        self._cipher_kind = None
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=5)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -105,6 +218,8 @@ class FoldArchive:
         self._conn.executescript(SCHEMA)
         self._conn.commit()
         self._migrate()
+        if encrypt:
+            self._init_encryption(key_path)
 
     def _migrate(self) -> None:
         cols = {row[1] for row in self._conn.execute("PRAGMA table_info(folds)").fetchall()}
@@ -113,6 +228,21 @@ class FoldArchive:
             self._conn.commit()
 
     def _init_encryption(self, key_path) -> None:
+        # V12 Phase 3: envelope encryption (per-tenant DEK under KEK); Fernet legacy fallback
+        if _HAS_AESGCM:
+            kek = Path(key_path or (self.path.parent / "kek.bin")).expanduser()
+            try:
+                self._cipher = EnvelopeCipher(kek)
+                self._cipher._conn = self._conn
+                self._cipher._dek_cache = {}
+                self._cipher.set_runner(
+                    lambda conn, sql, params=None: conn.execute(sql, params or ()).fetchall(),
+                    lambda: self._conn.commit(),
+                )
+                self._cipher_kind = "envelope"
+                return
+            except Exception:
+                pass
         try:
             from cryptography.fernet import Fernet
         except Exception:
@@ -129,16 +259,14 @@ class FoldArchive:
             except OSError:
                 pass
         self._fernet = Fernet(key)
+        self._cipher_kind = "fernet"
 
     @property
     def encrypted(self) -> bool:
-        return self._fernet is not None
+        return self._cipher_kind is not None
 
     def put(self, session_id: str, kind: str, messages: list, ref: Optional[str] = None,
             tenant_id: Optional[str] = None, max_per_tenant: int = 0) -> str:
-        payload = json.dumps(messages, ensure_ascii=False)
-        if self._fernet is not None:
-            payload = "enc:v1:" + self._fernet.encrypt(payload.encode("utf-8")).decode("ascii")
         if tenant_id:
             tenant = tenant_id
         elif ":" in session_id:
@@ -149,6 +277,12 @@ class FoldArchive:
                 tenant = current_tenant()
             except Exception:
                 tenant = "default"
+        payload = json.dumps(messages, ensure_ascii=False)
+        if self._cipher_kind == "envelope":
+            payload = "env:v1:" + base64.b64encode(
+                self._cipher.encrypt_blob(tenant, payload.encode("utf-8"))).decode("ascii")
+        elif self._fernet is not None:
+            payload = "enc:v1:" + self._fernet.encrypt(payload.encode("utf-8")).decode("ascii")
         if ref is None:
             raw = tenant + "\x00" + json.dumps(messages, ensure_ascii=False)
             ref = "fold:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
@@ -191,10 +325,15 @@ class FoldArchive:
             "kind": row[4],
             "n_messages": row[5],
             "approx_tokens": row[6],
-            "messages": self._decode(row[7]),
+            "messages": self._decode(row[7], tenant_id or row[1]),
         }
 
-    def _decode(self, payload: str):
+    def _decode(self, payload: str, tenant: str = "default"):
+        if isinstance(payload, str) and payload.startswith("env:v1:"):
+            try:
+                return json.loads(self._cipher.decrypt_blob(tenant, base64.b64decode(payload[7:])).decode("utf-8"))
+            except Exception:
+                return []
         if isinstance(payload, str) and payload.startswith("enc:v1:"):
             if self._fernet is None:
                 return []
@@ -214,10 +353,12 @@ class FoldArchive:
         return {"entries": n, "tokens_archived": tokens, "path": str(self.path)}
 
     def rotate_key(self, new_key_path: str | os.PathLike | None = None) -> int:
-        """Re-encrypt every folded payload under a fresh Fernet key.
-
-        Returns the number of rows rotated. No-op on plaintext archives.
+        """Rotate keys. Envelope: rewrap tenant DEKs only (payloads untouched).
+        Legacy Fernet: re-encrypt every folded payload under a fresh key.
         """
+        if self._cipher_kind == "envelope":
+            with self._lock:
+                return self._cipher.rotate_kek(self._conn)
         if self._fernet is None:
             return 0
         from cryptography.fernet import Fernet

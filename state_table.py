@@ -22,6 +22,7 @@ which file versions are current and which earlier reads are stale. Pure stdlib.
 from __future__ import annotations
 
 import difflib
+import hashlib
 import os
 import re
 import sqlite3
@@ -55,6 +56,17 @@ CREATE TABLE IF NOT EXISTS decisions (
     status     TEXT NOT NULL DEFAULT 'active'
 );
 CREATE INDEX IF NOT EXISTS idx_decisions_session ON decisions(session_id, status);
+CREATE TABLE IF NOT EXISTS segments (
+    session_id TEXT NOT NULL,
+    path       TEXT NOT NULL,
+    chunk_idx  INTEGER NOT NULL,
+    line_start INTEGER NOT NULL,
+    line_end   INTEGER NOT NULL,
+    hash       TEXT NOT NULL,
+    ts         REAL NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'FRESH',
+    PRIMARY KEY (session_id, path, chunk_idx)
+);
 """
 
 EDIT_TOOLS = {
@@ -95,10 +107,83 @@ class StateTable:
         now = time.time() if now is None else now
         edits_seen = set()
         with self._lock:
+            # V12 Phase 3: pair read-type calls with their results for chunk hashing
+            call_map = {}
+            for msg in messages or []:
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") in ("tool_use", "tool_call"):
+                            name = str(block.get("name") or "")
+                            payload = block.get("input") or {}
+                            if isinstance(payload, dict):
+                                for k in ("path", "file_path", "target_file", "filename"):
+                                    if isinstance(payload.get(k), str) and payload[k].strip():
+                                        call_map[block.get("id")] = (name.lower(), payload[k].strip())
+                                        break
+                for tc in msg.get("tool_calls") or []:
+                    fn = tc.get("function") if isinstance(tc, dict) else None
+                    if isinstance(fn, dict):
+                        try:
+                            payload = json.loads(fn.get("arguments") or "{}")
+                        except Exception:
+                            payload = {}
+                        if isinstance(payload, dict):
+                            for k in ("path", "file_path", "target_file", "filename"):
+                                if isinstance(payload.get(k), str) and payload[k].strip():
+                                    call_map[tc.get("id")] = (str(fn.get("name", "")).lower(), payload[k].strip())
+                                    break
             for msg in messages or []:
                 self._ingest_tool_calls(session_id, msg, now, edits_seen)
+                self._ingest_read_results(session_id, msg, call_map, now)
                 self._ingest_decisions(session_id, msg, now)
             self._conn.commit()
+
+    def _ingest_read_results(self, session_id: str, msg: dict, call_map: dict, now: float) -> None:
+        content = None
+        path = None
+        tc_id = msg.get("tool_call_id")
+        if tc_id and tc_id in call_map:
+            name, path = call_map[tc_id]
+        c = msg.get("content")
+        if isinstance(c, list):
+            for block in c:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    tc_id = block.get("tool_use_id")
+                    if tc_id in call_map:
+                        name, path = call_map[tc_id]
+                        inner = block.get("content")
+                        if isinstance(inner, str):
+                            content = inner
+                        elif isinstance(inner, list):
+                            content = "\n".join(
+                                b.get("text", "") for b in inner
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            )
+        if content is None or not path:
+            return
+        if any(t in name for t in ("read", "cat", "view", "open_file", "head", "tail")):
+            self._record_read(session_id, path, content, now)
+
+    def _record_read(self, session_id: str, path: str, content: str, now: float) -> None:
+        lines = content.splitlines()
+        chunk_size = 50
+        stored = {r[0]: r[1] for r in self._conn.execute(
+            "SELECT chunk_idx, hash FROM segments WHERE session_id=? AND path=?",
+            (session_id, path),
+        ).fetchall()}
+        total = max(1, (len(lines) + chunk_size - 1) // chunk_size) or 1
+        for ci in range(total):
+            part = "\n".join(lines[ci * chunk_size:(ci + 1) * chunk_size])
+            h = hashlib.sha256(part.encode("utf-8")).hexdigest()[:16]
+            status = "FRESH" if stored.get(ci) == h else "STALE"
+            self._conn.execute(
+                "INSERT INTO segments(session_id, path, chunk_idx, line_start, line_end, hash, ts, status) "
+                "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(session_id, path, chunk_idx) DO UPDATE SET "
+                "hash=excluded.hash, ts=excluded.ts, status=excluded.status",
+                (session_id, path, ci, ci * chunk_size + 1,
+                 min(len(lines), (ci + 1) * chunk_size) or chunk_size, h, now, status),
+            )
 
     def _ingest_tool_calls(self, session_id: str, msg: dict, now: float, edits_seen: set) -> None:
         calls = []
@@ -199,6 +284,16 @@ class StateTable:
         with self._lock:
             return self._render_locked(session_id, max_files, max_decisions)
 
+    def _segment_stats(self, session_id: str, path: str) -> dict:
+        rows = self._conn.execute(
+            "SELECT chunk_idx, line_start, line_end, status FROM segments "
+            "WHERE session_id=? AND path=? ORDER BY chunk_idx",
+            (session_id, path),
+        ).fetchall()
+        total = len(rows)
+        stale = [(r[1], r[2]) for r in rows if r[3] == "STALE"]
+        return {"total": total, "stale": stale}
+
     def _render_locked(self, session_id: str, max_files: int, max_decisions: int) -> str:
         files = self._conn.execute(
             "SELECT path, last_op, ts, edits, reads FROM files WHERE session_id=? "
@@ -223,8 +318,16 @@ class StateTable:
             parts = []
             for path, op, ts, edits, reads in files:
                 clock = time.strftime("%H:%M", time.localtime(ts))
-                stale = "; earlier reads stale" if edits else ""
-                parts.append(f"{path} ({op} {clock}{stale})")
+                seg = self._segment_stats(session_id, path)
+                if seg["total"] and seg["stale"]:
+                    ranges = ", ".join(f"{a}-{b}" for a, b in seg["stale"][:3])
+                    more = f" (+{len(seg['stale']) - 3} more)" if len(seg["stale"]) > 3 else ""
+                    note = f"; {len(seg['stale'])}/{seg['total']} chunks stale: {ranges}{more}"
+                elif edits:
+                    note = "; earlier reads stale"
+                else:
+                    note = "; chunks fresh"
+                parts.append(f"{path} ({op} {clock}{note})")
             lines.append("[FILES] " + " | ".join(parts))
         if active:
             items = [f"({kind}) {text[:120]}" for kind, text in active]

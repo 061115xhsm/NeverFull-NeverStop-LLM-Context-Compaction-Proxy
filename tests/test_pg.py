@@ -81,3 +81,30 @@ class TestPgSessionStore(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+@unittest.skipUnless(PG_OK, "postgres not reachable")
+class TestPgFoldArchive(unittest.TestCase):
+    def setUp(self):
+        from folding_pg import PgFoldArchive
+        self.archive = PgFoldArchive(DSN)
+
+    def tearDown(self):
+        try:
+            self.archive._run("DELETE FROM folds WHERE session_id LIKE %s", ("tpg-fold-%",))
+        except Exception:
+            pass
+        self.archive.close()
+
+    def test_roundtrip_and_tenant_isolation(self):
+        ref = self.archive.put("tpg-fold-s1", "compaction",
+                               [{"role": "user", "content": "secret pg"}], tenant_id="acme")
+        got = self.archive.get(ref, tenant_id="acme")
+        self.assertIsNotNone(got)
+        self.assertEqual(got["messages"][0]["content"], "secret pg")
+        self.assertIsNone(self.archive.get(ref, tenant_id="beta"))
+
+    def test_stats_and_rotate(self):
+        self.archive.put("tpg-fold-s2", "compaction", [{"role": "user", "content": "x"}])
+        self.assertGreaterEqual(self.archive.stats()["entries"], 1)
+        self.assertGreaterEqual(self.archive.rotate_key(), 0)

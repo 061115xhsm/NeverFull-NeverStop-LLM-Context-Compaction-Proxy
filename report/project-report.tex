@@ -353,6 +353,9 @@ fba1a7a  PostgreSQL SessionStore, quotas, rotate-key endpoint
 
 CI 使用 Python 3.11--3.13 矩阵，启动 Postgres 服务，执行字节编译、88 项测试与配对评测。依赖最小化：运行时仅 \texttt{aiohttp}；Postgres/Redis/语义模型为可选依赖。
 
+\section{V12 实施状态（2026-10-27）}
+按导师重构方案落地了 P0--P3：缓存用量计量（OpenAI/Anthropic/Gemini 的 cached/read/write 字段、有效成本与 TTFT）；上下文拓扑反转（尾部瞬态状态帧、append-only 检查点、工具确定性排序、\texttt{prompt\_cache\_key} 与 Anthropic 4 断点）；双水位线异步压缩（软 65\% 调度后台候选、硬 92\% 同步兜底，证据+计划 judge 后热替换）；虚拟 \texttt{neverfull\_restore\_context} 工具注入与非流式拦截回填；文件分块哈希（50 行/块，仅标记过期区段）；PostgreSQL 折叠归档；信封加密（租户 DEK + KEK，轮换只重包 DEK）；Redis 共享策略状态；\texttt{neverfull/} 包门面。测试增至 113 项（含 8 项真实 PostgreSQL）。Tree-sitter AST、Hybrid LinUCB、S3/MinIO 与流式虚拟工具拦截留待下一阶段。
+
 \section{未来工作}
 \begin{enumerate}
   \item \textbf{评测规模化}：把 LongMemEval、LoCoMo、Compact-Bench 纳入 CI，使用真实 LLM reader 与多任务配对集。
