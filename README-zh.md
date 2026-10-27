@@ -23,7 +23,7 @@
 8. [联系信息和致谢](#联系信息和致谢)
 9. [结语](#结语)
 
-> **V12（2026-10）：** 导师方案的 P0–P3 已落地：缓存计量、尾部状态帧 + 追加式检查点、65%/92% 异步压缩与轨迹校验、虚拟 `neverfull_restore_context` 工具、文件分块级失效、PostgreSQL 折叠归档、信封加密与 Redis 策略状态。详见 [STATUS.md](STATUS.md)。
+> **V12（2026-10）：** 导师方案的 P0–P3 已落地：缓存计量、尾部状态帧 + 追加式检查点、65%/92% 异步压缩与轨迹校验、虚拟 `neverfull_restore_context` 工具（流式+非流式）、AST 符号状态与跨度去重、PostgreSQL 折叠归档、信封加密、Redis 策略状态与 LinUCB 上下文赌博机。详见 [STATUS.md](STATUS.md)。
 
 ---
 

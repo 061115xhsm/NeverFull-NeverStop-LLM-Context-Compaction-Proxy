@@ -226,6 +226,21 @@ except Exception:
     ENH_CACHE_ALIGN = False
 
 try:
+    from linucb import DisjointLinUCB, ACTIONS as LINUCB_ACTIONS
+    ENH_LINUCB = True
+except Exception:
+    DisjointLinUCB = None
+    LINUCB_ACTIONS = ()
+    ENH_LINUCB = False
+
+try:
+    from dedupe import dedupe_observations
+    ENH_DEDUPE = True
+except Exception:
+    dedupe_observations = None
+    ENH_DEDUPE = False
+
+try:
     from virtual_tool import (TOOL_NAME as RESTORE_TOOL_NAME, inject_restore_tool,
                               extract_restore_calls, build_restore_messages,
                               parse_stream_restore_calls)
@@ -419,6 +434,8 @@ CACHE_ALIGN = os.environ.get("COMPACTION_PROXY_CACHE_ALIGN", "1") == "1"
 TRAILING_STATE_FRAME = os.environ.get("COMPACTION_PROXY_TRAILING_STATE", "1") == "1"
 ASYNC_COMPACTION = os.environ.get("COMPACTION_PROXY_ASYNC", "1") == "1"
 RESTORE_TOOL = os.environ.get("COMPACTION_PROXY_RESTORE_TOOL", "1") == "1"
+LINUCB_ENABLED = os.environ.get("COMPACTION_PROXY_LINUCB", "0") == "1"
+DEDUP_ENABLED = os.environ.get("COMPACTION_PROXY_DEDUP", "1") == "1"
 SOFT_WATERMARK = float(os.environ.get("COMPACTION_PROXY_SOFT_WATERMARK", "0.65"))
 HARD_WATERMARK = float(os.environ.get("COMPACTION_PROXY_HARD_WATERMARK", "0.92"))
 PG_DSN = os.environ.get("COMPACTION_PROXY_PG_DSN", "")
@@ -1062,6 +1079,8 @@ token_calibrator = TokenCalibrator() if (ENH_CALIBRATION and TokenCalibrator is 
 cost_tracker = CostTracker() if (ENH_COST and CostTracker is not None) else None
 shared_cache = SharedCache(REDIS_URL) if (ENH_SHARED_CACHE and SharedCache is not None) else None
 tenant_quota = DailyQuota(TENANT_DAILY_TOKENS) if (ENH_COST and DailyQuota is not None and TENANT_DAILY_TOKENS > 0) else None
+linucb_policy = DisjointLinUCB(redis_url=REDIS_URL) if (ENH_LINUCB and LINUCB_ENABLED and DisjointLinUCB is not None) else None
+_linucb_pending: dict = {}
 COMPACTION_USAGE = contextvars.ContextVar("compaction_usage", default=None)
 
 # ── V8: 语义保真度增强组件(可选) ────────────────────────────────────
@@ -6157,6 +6176,26 @@ def apply_async_candidate(body: dict, session_id: str) -> bool:
     return True
 
 
+def linucb_features(body: dict, session_id: str = "") -> list:
+    msgs = body.get("messages", [])
+    model = body.get("model", "")
+    limit = max(1, get_model_context_limit(model))
+    tokens = estimate_tokens_accurate(msgs)
+    if token_calibrator is not None:
+        tokens = token_calibrator.apply(model, tokens)
+    ratio = min(1.5, tokens / limit)
+    total_chars = sum(len(_messages_text([m])) for m in msgs) or 1
+    _, saved = dedupe_observations(msgs) if dedupe_observations else (msgs, 0)
+    dup = min(1.0, saved / total_chars)
+    cache = metrics.get("upstream_cache_hit_ratio_sum") / max(1.0, metrics.get("upstream_cache_hit_ratio_n"))
+    depth = min(1.0, len(msgs) / 200.0)
+    quota = 0.0
+    if tenant_quota is not None and tenant_quota.limit:
+        quota = min(1.0, tenant_quota.used(current_tenant()) / tenant_quota.limit)
+    drift = abs((token_calibrator.factor(model) if token_calibrator else 1.0) - 1.0)
+    return [ratio, dup, cache, depth, quota, min(1.0, drift)]
+
+
 def shadow_probe(body: dict, session_id: str = "") -> dict:
     """Observe-only mode: estimate what compaction would do, never mutate the request."""
     messages = body.get("messages", [])
@@ -6385,8 +6424,30 @@ async def do_compaction(
         keep_turns = min(base_keep - (attempt - 1) * 2, adaptive_max_keep)
         keep_turns = max(2, keep_turns)
 
-        # V11 P4: policy action (default standard; only active when POLICY_ENABLED)
+        # V11 P4 / V12: policy action (UCB1 or LinUCB)
         action = "standard"
+        l_action = None
+        if linucb_policy is not None:
+            try:
+                l_feat = linucb_features(body, session_id)
+                pend = _linucb_pending.get(session_id)
+                if pend:
+                    restore_delta = metrics.get("restore_calls_intercepted") - pend["restore"]
+                    overflow_delta = metrics.get("overflow_detected") - pend["overflow"]
+                    reward = pend.get("evidence", 0.5) - 0.3 * min(1, restore_delta) - 0.4 * min(1, overflow_delta)
+                    linucb_policy.update(pend["arm"], pend["x"], reward)
+                    _linucb_pending.pop(session_id, None)
+                l_action = linucb_policy.choose(l_feat)
+                keep_turns = max(2, keep_turns + {
+                    "dedup_only": 2, "refold_chunk": 0,
+                    "extractive_ast": -2, "slipstream_deep": -2}[l_action])
+                _linucb_pending.setdefault(session_id, {
+                    "arm": l_action, "x": l_feat,
+                    "restore": metrics.get("restore_calls_intercepted"),
+                    "overflow": metrics.get("overflow_detected"), "ts": time.time()})
+                metrics.inc("linucb_decisions")
+            except Exception as e:
+                logger.debug(f"linucb skipped: {e}")
         if ENH_POLICY and context_policy is not None:
             action = context_policy.choose(task_class, session_id)
             keep_turns = max(2, keep_turns + {"light": 2, "standard": 0, "deep": -2}[action])
@@ -6402,6 +6463,17 @@ async def do_compaction(
         if not old_msgs:
             logger.warning("No messages to compact, giving up")
             break
+
+        # V12: span-level observation deduplication (safe, zero LLM calls)
+        if ENH_DEDUPE and dedupe_observations is not None and (DEDUP_ENABLED or l_action in ("dedup_only", "refold_chunk")):
+            try:
+                deduped, saved_chars = dedupe_observations(old_msgs)
+                if saved_chars > 0:
+                    old_msgs = deduped
+                    metrics.inc("dedup_saved_chars", saved_chars)
+                    metrics.inc("dedup_applied")
+            except Exception as e:
+                logger.debug(f"dedupe skipped: {e}")
 
         # V5: Use custom compression engine if configured and applicable
         if use_custom_engine:
@@ -6604,6 +6676,8 @@ async def do_compaction(
                 if ENH_POLICY and context_policy is not None and probes:
                     context_policy.reward(task_class, action, probes["score"])
                     context_policy.observe_quality(session_id, probes["score"])
+                if l_action and session_id in _linucb_pending and probes:
+                    _linucb_pending[session_id]["evidence"] = probes["score"]
             except Exception as e:
                 logger.warning("Folding skipped (non-fatal): %s", e)
 
@@ -7814,6 +7888,15 @@ async def handle_health(request: web.Request) -> web.Response:
             "hit_ratio_avg": round(
                 metrics.get("upstream_cache_hit_ratio_sum")
                 / max(1.0, metrics.get("upstream_cache_hit_ratio_n")), 3),
+        },
+        "linucb": {
+            "enabled": bool(linucb_policy),
+            "decisions": metrics.get("linucb_decisions"),
+            "arms": linucb_policy.stats() if linucb_policy else {},
+        },
+        "dedupe": {
+            "applied": metrics.get("dedup_applied"),
+            "saved_chars": metrics.get("dedup_saved_chars"),
         },
         "restore_tool": {
             "enabled": bool(RESTORE_TOOL and ENH_RESTORE and FOLDING_ENABLED),
