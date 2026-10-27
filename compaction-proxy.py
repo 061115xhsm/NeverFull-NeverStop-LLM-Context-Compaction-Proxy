@@ -394,6 +394,8 @@ TENANT_MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_FOLDS", "0"))
 TENANT_MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_SESSIONS", "0"))
 TENANT_DAILY_TOKENS = int(os.environ.get("COMPACTION_PROXY_TENANT_DAILY_TOKENS", "0"))
 ENFORCE_QUOTA = os.environ.get("COMPACTION_PROXY_ENFORCE_QUOTA", "0") == "1"
+CACHE_READ_FACTOR = float(os.environ.get("COMPACTION_PROXY_CACHE_READ_FACTOR", "0.1"))
+CACHE_WRITE_FACTOR = float(os.environ.get("COMPACTION_PROXY_CACHE_WRITE_FACTOR", "1.25"))
 
 # V11 P2/P4/P5: evidence floor, contract retry, learned policy, capability profile
 EVIDENCE_FLOOR = float(os.environ.get("COMPACTION_PROXY_EVIDENCE_FLOOR", "0.75"))
@@ -1053,11 +1055,18 @@ def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float,
     if isinstance(usage, dict) and (usage.get("prompt") or usage.get("completion")):
         prompt_t = int(usage.get("prompt", 0))
         completion_t = int(usage.get("completion", 0))
+        cached_t = int(usage.get("cached", 0) or 0)
+        write_t = int(usage.get("cache_write", 0) or 0)
         call_tokens = prompt_t + completion_t
+        effective_input = (max(0, prompt_t - cached_t - write_t)
+                           + cached_t * CACHE_READ_FACTOR + write_t * CACHE_WRITE_FACTOR)
+        effective_cost = int(effective_input + completion_t)
         metrics.inc("compaction_prompt_tokens_total", prompt_t)
         metrics.inc("compaction_completion_tokens_total", completion_t)
+        metrics.inc("compaction_effective_cost_tokens_total", effective_cost)
     else:
         call_tokens = before_t + 2000  # estimate when the provider reports no usage
+        effective_cost = call_tokens
     saved = max(0, before_t - summary_t)
     metrics.inc("compaction_calls")
     metrics.inc("compaction_cost_tokens_total", call_tokens)
@@ -1071,6 +1080,7 @@ def record_compaction_cost(before_msgs: list, summary: str, latency_ms: float,
             before_tokens=before_t, after_tokens=summary_t,
             cost_tokens=(0 if cache_hit else call_tokens),
             latency_ms=latency_ms, cache_hit=cache_hit,
+            effective_cost_tokens=effective_cost,
         )
     if cache_hit:
         metrics.inc("compaction_cache_saved_tokens_total", saved)
@@ -4985,18 +4995,15 @@ async def compact_messages(
 
             # V11: capture provider-reported usage for cost attribution + calibration
             try:
-                usage = data.get("usage") or data.get("usageMetadata") or {}
-                if isinstance(usage, dict):
-                    pt = usage.get("prompt_tokens") or usage.get("input_tokens") or usage.get("promptTokenCount") or 0
-                    ct = usage.get("completion_tokens") or usage.get("output_tokens") or usage.get("candidatesTokenCount") or 0
-                    if pt or ct:
-                        COMPACTION_USAGE.set({"prompt": int(pt), "completion": int(ct), "model": COMPACTION_MODEL})
-                        if token_calibrator is not None:
-                            token_calibrator.observe(
-                                COMPACTION_MODEL,
-                                estimate_tokens_accurate(payload.get("messages", [])),
-                                int(pt),
-                            )
+                u = parse_upstream_usage(data)
+                if u.get("prompt") or u.get("completion"):
+                    COMPACTION_USAGE.set({**u, "model": COMPACTION_MODEL})
+                    if token_calibrator is not None:
+                        token_calibrator.observe(
+                            COMPACTION_MODEL,
+                            estimate_tokens_accurate(payload.get("messages", [])),
+                            u["prompt"],
+                        )
             except Exception:
                 pass
 
@@ -5956,6 +5963,43 @@ async def forward_request(
 
 # ── Preemptive Compaction Check ──────────────────────────────────────────
 
+def parse_upstream_usage(data: dict) -> dict:
+    """Normalize provider usage into {prompt, completion, cached, cache_write}."""
+    try:
+        u = (data or {}).get("usage") or (data or {}).get("usageMetadata") or {}
+        if not isinstance(u, dict):
+            return {}
+        prompt = int(u.get("prompt_tokens") or u.get("input_tokens") or u.get("promptTokenCount") or 0)
+        completion = int(u.get("completion_tokens") or u.get("output_tokens") or u.get("candidatesTokenCount") or 0)
+        cached = 0
+        write = 0
+        ptd = u.get("prompt_tokens_details") or {}
+        if isinstance(ptd, dict):
+            cached = int(ptd.get("cached_tokens") or 0)
+            write = int(ptd.get("cache_write_tokens") or 0)
+        cached = int(u.get("cache_read_input_tokens") or cached)
+        write = int(u.get("cache_creation_input_tokens") or write)
+        cached = int(u.get("cachedContentTokenCount") or cached)
+        return {"prompt": prompt, "completion": completion, "cached": cached, "cache_write": write}
+    except Exception:
+        return {}
+
+
+def record_upstream_usage(model: str, usage: dict) -> None:
+    """Phase 0: cache economics metering for forwarded requests."""
+    if not isinstance(usage, dict) or not (usage.get("prompt") or usage.get("completion")):
+        return
+    metrics.inc("upstream_prompt_tokens_total", int(usage["prompt"]))
+    metrics.inc("upstream_completion_tokens_total", int(usage["completion"]))
+    if usage.get("cached"):
+        metrics.inc("upstream_cached_read_tokens_total", int(usage["cached"]))
+    if usage.get("cache_write"):
+        metrics.inc("upstream_cache_write_tokens_total", int(usage["cache_write"]))
+    if usage.get("prompt"):
+        metrics.inc("upstream_cache_hit_ratio_sum", usage["cached"] / max(1, usage["prompt"]))
+        metrics.inc("upstream_cache_hit_ratio_n", 1)
+
+
 def shadow_probe(body: dict, session_id: str = "") -> dict:
     """Observe-only mode: estimate what compaction would do, never mutate the request."""
     messages = body.get("messages", [])
@@ -6661,6 +6705,10 @@ async def handle_non_streaming(
 
     if status == 200:
         metrics.inc("request_success")
+        try:
+            record_upstream_usage(original_model, parse_upstream_usage(json.loads(resp_body)))
+        except Exception:
+            pass
         # Convert Anthropic response back to OpenAI format
         if need_anthropic_conversion:
             try:
@@ -6788,6 +6836,7 @@ async def handle_streaming(
 
     metrics.inc("request_total")
     metrics.inc("request_streaming")
+    t_stream_start = time.monotonic()
     thrashing_detector.record_message()
 
     try:
@@ -6867,7 +6916,7 @@ async def handle_streaming(
         return web.Response(status=upstream_resp.status, body=error_body, content_type="application/json")
 
     metrics.inc("request_success")
-    return await _stream_sse_response(request, upstream_resp, need_anthropic_conversion=need_anthropic_conversion, model=original_model)
+    return await _stream_sse_response(request, upstream_resp, need_anthropic_conversion=need_anthropic_conversion, model=original_model, t_start=t_stream_start)
 
 
 async def _stream_sse_response(
@@ -6875,6 +6924,7 @@ async def _stream_sse_response(
     upstream_resp: aiohttp.ClientResponse,
     need_anthropic_conversion: bool = False,
     model: str = "",
+    t_start: float = 0.0,
 ) -> web.StreamResponse:
     stream_resp = web.StreamResponse(
         status=200,
@@ -6896,10 +6946,14 @@ async def _stream_sse_response(
         return stream_resp
 
     try:
+        first_chunk_seen = False
         if need_anthropic_conversion:
             # V6: Convert Anthropic SSE events to OpenAI SSE format line by line
             buffer = b""
             async for chunk in upstream_resp.content.iter_any():
+                if not first_chunk_seen:
+                    metrics.observe("upstream_ttft_ms", (time.monotonic() - t_start) * 1000)
+                    first_chunk_seen = True
                 buffer += chunk
                 # Process complete lines from buffer
                 while b"\n" in buffer:
@@ -7314,6 +7368,10 @@ async def handle_anthropic_messages(request: web.Request) -> web.Response:
 
     # Success — return Anthropic response directly (no conversion)
     metrics.inc("request_success")
+    try:
+        record_upstream_usage(body.get("model", ""), parse_upstream_usage(json.loads(resp_body)))
+    except Exception:
+        pass
 
     # V6 fix: Check for empty thinking blocks in non-streaming response
     try:
@@ -7440,6 +7498,14 @@ async def handle_health(request: web.Request) -> web.Response:
             "rate_limit_per_min": RATE_LIMIT,
             "max_body_mb": MAX_BODY_MB,
             "fold_encrypted": bool(fold_archive.encrypted) if fold_archive else False,
+        },
+        "upstream_cache": {
+            "prompt_tokens": metrics.get("upstream_prompt_tokens_total"),
+            "cached_read_tokens": metrics.get("upstream_cached_read_tokens_total"),
+            "cache_write_tokens": metrics.get("upstream_cache_write_tokens_total"),
+            "hit_ratio_avg": round(
+                metrics.get("upstream_cache_hit_ratio_sum")
+                / max(1.0, metrics.get("upstream_cache_hit_ratio_n", 1)), 3),
         },
         "shadow": {
             "enabled": SHADOW_MODE,

@@ -14,7 +14,7 @@ class CostTracker:
 
     def record(self, session_id: str, model: str, before_tokens: int, after_tokens: int,
                cost_tokens: int, latency_ms: float, cache_hit: bool = False,
-               tenant_id: str = "default") -> None:
+               tenant_id: str = "default", effective_cost_tokens: int = 0) -> None:
         saved = max(0, int(before_tokens) - int(after_tokens))
         event = {
             "ts": time.time(),
@@ -25,6 +25,7 @@ class CostTracker:
             "after": int(after_tokens),
             "saved": saved,
             "cost": int(cost_tokens),
+            "effective_cost": int(effective_cost_tokens or 0),
             "latency_ms": round(float(latency_ms), 1),
             "cache_hit": bool(cache_hit),
         }
@@ -37,6 +38,7 @@ class CostTracker:
         if not events:
             return {"events": 0}
         total_cost = sum(e["cost"] for e in events)
+        total_effective_cost = sum(e.get("effective_cost", 0) for e in events)
         total_saved = sum(e["saved"] for e in events)
         lat = sorted(e["latency_ms"] for e in events)
         by_model: dict = {}
@@ -53,6 +55,7 @@ class CostTracker:
         return {
             "events": len(events),
             "cost_tokens": total_cost,
+            "effective_cost_tokens": total_effective_cost,
             "saved_tokens": total_saved,
             "net_saved_tokens": total_saved - total_cost,
             "cache_hits": sum(1 for e in events if e["cache_hit"]),
