@@ -56,6 +56,13 @@ class PostgresSessionStore:
                 )
             """)
             cur.execute("""
+                CREATE TABLE IF NOT EXISTS checkpoints (
+                    session_id TEXT, seq INTEGER, text TEXT,
+                    created_at DOUBLE PRECISION DEFAULT EXTRACT(EPOCH FROM now()),
+                    PRIMARY KEY (session_id, seq)
+                )
+            """)
+            cur.execute("""
                 CREATE TABLE IF NOT EXISTS arc_entries (
                     arc_id     TEXT PRIMARY KEY,
                     content    TEXT,
@@ -210,6 +217,25 @@ class PostgresSessionStore:
             cur.execute("SELECT arc_id, content FROM arc_entries")
             rows = cur.fetchall()
         return {r[0]: r[1] or "" for r in rows}
+
+    # -- checkpoints -----------------------------------------------------------
+    def append_checkpoint(self, session_id: str, text: str) -> int:
+        scoped = self._scoped(session_id)
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute("SELECT COALESCE(MAX(seq),0)+1 FROM checkpoints WHERE session_id=%s", (scoped,))
+            seq = int(cur.fetchone()[0] or 1)
+            cur.execute(
+                "INSERT INTO checkpoints(session_id, seq, text) VALUES (%s,%s,%s) "
+                "ON CONFLICT (session_id, seq) DO NOTHING",
+                (scoped, seq, text),
+            )
+        return seq
+
+    def get_checkpoints(self, session_id: str) -> list:
+        scoped = self._scoped(session_id)
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute("SELECT text FROM checkpoints WHERE session_id=%s ORDER BY seq", (scoped,))
+            return [r[0] for r in cur.fetchall()]
 
     # -- maintenance --------------------------------------------------------------
     @property

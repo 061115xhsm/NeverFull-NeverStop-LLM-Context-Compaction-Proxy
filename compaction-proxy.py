@@ -218,6 +218,13 @@ except Exception:
     ENH_CALIBRATION = False
 
 try:
+    from cache_align import apply_openai_cache, apply_anthropic_cache
+    ENH_CACHE_ALIGN = True
+except Exception:
+    apply_openai_cache = apply_anthropic_cache = None
+    ENH_CACHE_ALIGN = False
+
+try:
     from cost_tracker import CostTracker, DailyQuota
     ENH_COST = True
 except Exception:
@@ -389,6 +396,8 @@ MAINTENANCE_OWNER = os.environ.get("COMPACTION_PROXY_MAINTENANCE_OWNER", "1") ==
 REDIS_URL = os.environ.get("COMPACTION_PROXY_REDIS_URL", "")
 SHARED_STORAGE = os.environ.get("COMPACTION_PROXY_STORAGE", "sqlite")
 SHADOW_MODE = os.environ.get("COMPACTION_PROXY_SHADOW", "0") == "1"
+CACHE_ALIGN = os.environ.get("COMPACTION_PROXY_CACHE_ALIGN", "1") == "1"
+TRAILING_STATE_FRAME = os.environ.get("COMPACTION_PROXY_TRAILING_STATE", "1") == "1"
 PG_DSN = os.environ.get("COMPACTION_PROXY_PG_DSN", "")
 TENANT_MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_FOLDS", "0"))
 TENANT_MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_SESSIONS", "0"))
@@ -1812,6 +1821,16 @@ class SessionStore:
                 updated_at REAL
             )
         """)
+        # V12 Phase 1: append-only compaction checkpoints (immutable blocks)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS checkpoints (
+                session_id TEXT,
+                seq INTEGER,
+                text TEXT,
+                created_at REAL,
+                PRIMARY KEY (session_id, seq)
+            )
+        """)
         # ARC log persistence
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS arc_entries (
@@ -2055,6 +2074,28 @@ class SessionStore:
     def session_count(self):
         cursor = self._conn.execute("SELECT COUNT(*) FROM sessions")
         return cursor.fetchone()[0]
+
+    @_db_locked
+    def append_checkpoint(self, session_id: str, text: str) -> int:
+        """Phase 1: append an immutable compaction checkpoint."""
+        with self._write_lock:
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(seq),0)+1 FROM checkpoints WHERE session_id=?", (session_id,)
+            ).fetchone()
+            seq = int(row[0]) if row else 1
+            self._conn.execute(
+                "INSERT INTO checkpoints(session_id, seq, text, created_at) VALUES (?,?,?,?)",
+                (session_id, seq, text, time.time()),
+            )
+            self._conn.commit()
+            return seq
+
+    @_db_locked
+    def get_checkpoints(self, session_id: str) -> list:
+        rows = self._conn.execute(
+            "SELECT text FROM checkpoints WHERE session_id=? ORDER BY seq", (session_id,)
+        ).fetchall()
+        return [r[0] for r in rows]
 
     @_db_locked
     def prune(self, max_age_days: float = 90.0, max_sessions: int = 2000) -> int:
@@ -5788,7 +5829,7 @@ def inject_session_context(body: dict, session_id: str = "default") -> dict:
     return body
 
 
-def build_compacted_messages(summary: str, recent_msgs: list) -> list:
+def build_compacted_messages(summary: str, recent_msgs: list, trailing_frame: str = "") -> list:
     """
     V5: Build compacted message list using CachedSystemPrompt layers.
     Each layer is independently tracked for cache efficiency.
@@ -5870,6 +5911,11 @@ def build_compacted_messages(summary: str, recent_msgs: list) -> list:
                     "Recent messages are preserved verbatim below. Continue the conversation from where it left off."
                 ),
             })
+
+    # V12 Phase 1: trailing ephemeral state frame at the END of the message list
+    if trailing_frame and TRAILING_STATE_FRAME:
+        result.append({"role": "user",
+                       "content": f"<state_frame>\n{trailing_frame}\n</state_frame>"})
 
     # V4: Prune old compaction artifacts
     result = prune_old_compaction_artifacts(result)
@@ -6407,6 +6453,7 @@ async def do_compaction(
                             contract = probes2["contract"]
                             metrics.inc("evidence_retry_improved")
 
+                trailing_notes = []
                 if contract["missing"] or contract["identifiers_missing"]:
                     metrics.inc("fold_contract_miss")
                     logger.warning(
@@ -6415,17 +6462,28 @@ async def do_compaction(
                         contract["identifiers_total"] - contract["identifiers_kept"],
                         contract["identifiers_total"],
                     )
-                    summary = summary + "\n\n" + format_missing_note(contract)
+                    trailing_notes.append(format_missing_note(contract))
                 if probes and probes["failures"]:
-                    summary = summary + "\n\n" + probes["note"]
+                    trailing_notes.append(probes["note"])
 
                 ref = fold_archive.put(session_id, "compaction", old_msgs,
                                    tenant_id=current_tenant() if ENH_TENANT else "default",
                                    max_per_tenant=TENANT_MAX_FOLDS)
                 digest = build_fold_digest(old_msgs, commitments=commitments)
-                summary = (
-                    (state_snapshot + "\n\n") if state_snapshot else ""
-                ) + render_fold_block(digest, ref) + "\n\n" + summary
+                checkpoint_block = render_fold_block(digest, ref) + "\n\n" + summary
+                if session_store is not None:
+                    try:
+                        session_store.append_checkpoint(session_id, checkpoint_block)
+                        cps = session_store.get_checkpoints(session_id)
+                        summary = "\n\n".join(cps) if cps else checkpoint_block
+                    except Exception as e:
+                        logger.debug(f"checkpoint append failed: {e}")
+                        summary = checkpoint_block
+                else:
+                    summary = checkpoint_block
+                trailing_frame = state_snapshot or ""
+                for n in trailing_notes:
+                    trailing_frame = (trailing_frame + "\n\n" + n) if trailing_frame else n
                 metrics.inc("fold_archive_write")
                 logger.info(
                     "Folded %d messages into %s (evidence %.2f)",
@@ -6439,7 +6497,7 @@ async def do_compaction(
                 logger.warning("Folding skipped (non-fatal): %s", e)
 
         # Build compacted message list (V4: includes semantic memory, pruning, cache ordering)
-        body["messages"] = build_compacted_messages(summary, recent_msgs)
+        body["messages"] = build_compacted_messages(summary, recent_msgs, trailing_frame=trailing_frame)
 
         # V5: Orphan tool pair sanitization
         body["messages"] = sanitize_tool_pairs(body["messages"])
@@ -6625,6 +6683,14 @@ async def handle_non_streaming(
     # V5: Inject session context into cached system prompt
     inject_session_context(body, session_id)
 
+    if ENH_CACHE_ALIGN and CACHE_ALIGN:
+        try:
+            if is_upstream_anthropic():
+                body = apply_anthropic_cache(body)
+            else:
+                body = apply_openai_cache(body, current_tenant() if ENH_TENANT else "default", session_id)
+        except Exception as e:
+            logger.debug(f"cache align skipped: {e}")
     body_bytes = json.dumps(body).encode("utf-8")
 
     # 预防性压缩检查
@@ -6832,6 +6898,14 @@ async def handle_streaming(
         else:
             upstream_url = UPSTREAM_BASE.rstrip("/") + "/chat/completions"
 
+    if ENH_CACHE_ALIGN and CACHE_ALIGN:
+        try:
+            if need_anthropic_conversion:
+                body = apply_anthropic_cache(body)
+            else:
+                body = apply_openai_cache(body, current_tenant() if ENH_TENANT else "default", session_id)
+        except Exception as e:
+            logger.debug(f"cache align skipped: {e}")
     body_bytes = json.dumps(body).encode("utf-8")
 
     metrics.inc("request_total")
