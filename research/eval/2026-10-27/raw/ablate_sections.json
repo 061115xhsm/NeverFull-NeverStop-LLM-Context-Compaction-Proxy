@@ -1,0 +1,201 @@
+{
+  "tag": "ablate_sections",
+  "timestamp": "2026-10-27T15:26:38",
+  "commit": "c734de5",
+  "dataset": "benchmark/data/locomo10.json",
+  "conversations": 2,
+  "questions_per_conv": 3,
+  "reader": "llm",
+  "reader_model": "tierflow",
+  "ablate": [
+    "sections"
+  ],
+  "summary": {
+    "v11": {
+      "views": 2,
+      "compression": 0.913,
+      "evidence": 0.917,
+      "qa": 0.167,
+      "summary_s": 12.685,
+      "cost": 31801
+    },
+    "full": {
+      "views": 2,
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.5,
+      "summary_s": 0.0,
+      "cost": 0
+    }
+  },
+  "details": [
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "compression": 0.92,
+      "evidence": 0.833,
+      "qa": 0.0,
+      "cost": 17466,
+      "seconds": 12.7
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.667,
+      "cost": 0,
+      "seconds": 0
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "v11",
+      "compression": 0.906,
+      "evidence": 1.0,
+      "qa": 0.333,
+      "cost": 14335,
+      "seconds": 12.67
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "full",
+      "compression": 0.0,
+      "evidence": 1.0,
+      "qa": 0.333,
+      "cost": 0,
+      "seconds": 0
+    }
+  ],
+  "qa_details": [
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "question": "What did Caroline research?",
+      "expected": "Adoption agencies",
+      "answer": "",
+      "evidence": [
+        "D2:8"
+      ]
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "answer": "",
+      "evidence": [
+        "D1:3"
+      ]
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "v11",
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "answer": "",
+      "evidence": [
+        "D1:9",
+        "D1:11"
+      ]
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "question": "What did Caroline research?",
+      "expected": "Adoption agencies",
+      "answer": "adoption agencies",
+      "evidence": [
+        "D2:8"
+      ]
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "question": "When did Caroline go to the LGBTQ support group?",
+      "expected": "7 May 2023",
+      "answer": "7 May 2023",
+      "evidence": [
+        "D1:3"
+      ]
+    },
+    {
+      "conv": "conv-26",
+      "strategy": "full",
+      "question": "What fields would Caroline be likely to pursue in her educaton?",
+      "expected": "Psychology, counseling certification",
+      "answer": "counseling or working in mental health",
+      "evidence": [
+        "D1:9",
+        "D1:11"
+      ]
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "v11",
+      "question": "What do Jon and Gina both have in common?",
+      "expected": "They lost their jobs and decided to start their own businesses.",
+      "answer": "",
+      "evidence": [
+        "D1:2",
+        "D1:3",
+        "D1:4",
+        "D2:1"
+      ]
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "v11",
+      "question": "When Jon has lost his job as a banker?",
+      "expected": "19 January, 2023",
+      "answer": "19 January, 2023",
+      "evidence": [
+        "D1:2"
+      ]
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "v11",
+      "question": "How do Jon and Gina both like to destress?",
+      "expected": "by dancing",
+      "answer": "Dance",
+      "evidence": [
+        "D1:7",
+        "D1:6"
+      ]
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "full",
+      "question": "What do Jon and Gina both have in common?",
+      "expected": "They lost their jobs and decided to start their own businesses.",
+      "answer": "",
+      "evidence": [
+        "D1:2",
+        "D1:3",
+        "D1:4",
+        "D2:1"
+      ]
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "full",
+      "question": "When Jon has lost his job as a banker?",
+      "expected": "19 January, 2023",
+      "answer": "19 January, 2023",
+      "evidence": [
+        "D1:2"
+      ]
+    },
+    {
+      "conv": "conv-30",
+      "strategy": "full",
+      "question": "How do Jon and Gina both like to destress?",
+      "expected": "by dancing",
+      "answer": "",
+      "evidence": [
+        "D1:7",
+        "D1:6"
+      ]
+    }
+  ]
+}

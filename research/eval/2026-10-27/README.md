@@ -17,6 +17,8 @@ metadata; reports are Markdown summaries.
 | `historical_4conv` | 4 convs x 4 q, full/truncate/llm/v11 | complete (2026-10-26) | `raw/historical_memory_eval_4conv.json`, `reports/historical_4conv.md` |
 | `baseline_4x3` | 4 convs x 3 q, full/truncate/llm/v11 | partial (conv-41 summaries timed out) | `raw/baseline_4x3.partial.json`, `reports/baseline_4x3_partial.md` |
 | `cache_eval` | head vs tail state frame, 5 turns each | complete | `raw/cache_eval.json`, `reports/cache_eval.md` |
+| `ablate_*` | 2 convs x 3 q, V11 with one component removed | complete (facts/salient/sections/last_session) | `raw/ablate_*.json` |
+| `reader_pro_2x3` | tierflow_pro reader | aborted (process killed after conv-30) | `raw/reader_pro_2x3.partial.json` |
 
 ## Results
 
@@ -40,6 +42,19 @@ metadata; reports are Markdown summaries.
 `tail` appends the changing state frame after the history and keeps the 30k-char
 static prefix byte-stable (0.99 hit ratio); `head` prepends it to the system prompt
 and drops to 0.594.
+
+## Ablation (2 conversations x 3 questions, V11 view)
+
+| variant | ablated component | views | compression | evidence | QA |
+|---|---|---|---|---|---|
+| ablate_facts | facts | 2 | 0.459 | 0.459 | 0.084 |
+| ablate_salient | salient | 2 | 0.478 | 0.188 | 0.000 |
+| ablate_sections | sections | 2 | 0.457 | 0.459 | 0.084 |
+| ablate_last_session | last_session | 2 | 0.468 | 0.375 | 0.084 |
+
+Key signal: removing verbatim **salient lines** collapses evidence recall to 0.375;
+removing the last-session verbatim drops it to 0.750; removing the facts list or section
+headers leaves evidence unchanged (facts are carried by the salient lines).
 
 ## Caveats
 
