@@ -93,6 +93,7 @@ V4 基于 2025-2026 前沿论文研究升级，新增 10 项技术:
 import ast
 import asyncio
 import contextvars
+import copy
 import socket
 import hashlib
 import json
@@ -223,6 +224,14 @@ try:
 except Exception:
     apply_openai_cache = apply_anthropic_cache = None
     ENH_CACHE_ALIGN = False
+
+try:
+    from virtual_tool import TOOL_NAME as RESTORE_TOOL_NAME, inject_restore_tool, extract_restore_calls, build_restore_messages
+    ENH_RESTORE = True
+except Exception:
+    RESTORE_TOOL_NAME = ""
+    inject_restore_tool = extract_restore_calls = build_restore_messages = None
+    ENH_RESTORE = False
 
 try:
     from cost_tracker import CostTracker, DailyQuota
@@ -398,6 +407,10 @@ SHARED_STORAGE = os.environ.get("COMPACTION_PROXY_STORAGE", "sqlite")
 SHADOW_MODE = os.environ.get("COMPACTION_PROXY_SHADOW", "0") == "1"
 CACHE_ALIGN = os.environ.get("COMPACTION_PROXY_CACHE_ALIGN", "1") == "1"
 TRAILING_STATE_FRAME = os.environ.get("COMPACTION_PROXY_TRAILING_STATE", "1") == "1"
+ASYNC_COMPACTION = os.environ.get("COMPACTION_PROXY_ASYNC", "1") == "1"
+RESTORE_TOOL = os.environ.get("COMPACTION_PROXY_RESTORE_TOOL", "1") == "1"
+SOFT_WATERMARK = float(os.environ.get("COMPACTION_PROXY_SOFT_WATERMARK", "0.65"))
+HARD_WATERMARK = float(os.environ.get("COMPACTION_PROXY_HARD_WATERMARK", "0.92"))
 PG_DSN = os.environ.get("COMPACTION_PROXY_PG_DSN", "")
 TENANT_MAX_FOLDS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_FOLDS", "0"))
 TENANT_MAX_SESSIONS = int(os.environ.get("COMPACTION_PROXY_TENANT_MAX_SESSIONS", "0"))
@@ -6046,13 +6059,101 @@ def record_upstream_usage(model: str, usage: dict) -> None:
         metrics.inc("upstream_cache_hit_ratio_n", 1)
 
 
+_async_candidates: dict = {}
+_async_tasks: set = set()
+
+
+def _messages_text(messages: list) -> str:
+    parts = []
+    for m in messages or []:
+        c = m.get("content")
+        if isinstance(c, str):
+            parts.append(c)
+        elif isinstance(c, list):
+            parts.extend(b.get("text", "") for b in c if isinstance(b, dict))
+    return "\n".join(parts)
+
+
+async def _background_compact(snapshot_body: dict, original_messages: list, session_id: str,
+                              api_key: str, session) -> None:
+    """Phase 2: Slipstream-style candidate compaction off the critical path."""
+    try:
+        metrics.inc("async_compaction_started")
+        t0 = time.monotonic()
+        compacted = await do_compaction(copy.deepcopy(snapshot_body), api_key, session,
+                                        is_preemptive=True, session_id=session_id)
+        if not compacted:
+            metrics.inc("async_compaction_failed")
+            return
+        cand_messages = compacted.get("messages", [])
+        cand_text = _messages_text(cand_messages)
+        commitments = extract_commitments(original_messages)
+        identifiers = extract_identifiers(original_messages)
+        probes = run_evidence_probes(original_messages, cand_text, commitments, identifiers)
+        # plan-level check: last-turn commands/paths should survive
+        tail_text = _messages_text(original_messages[-6:])
+        tail_tokens = set(re.findall(r"/[\w/.-]+\.\w{1,10}|\b[a-z_]{4,}\b", tail_text.lower()))
+        plan_ok = not tail_tokens or (sum(1 for t in tail_tokens if t in cand_text.lower()) / len(tail_tokens) >= 0.6)
+        if probes["score"] < EVIDENCE_FLOOR or not plan_ok:
+            metrics.inc("async_compaction_rejected")
+            logger.warning("Async compaction rejected: evidence=%.2f plan_ok=%s", probes["score"], plan_ok)
+            return
+        _async_candidates[session_id] = {
+            "messages": cand_messages,
+            "msg_count": len(original_messages),
+            "evidence": probes["score"],
+            "ready_at": time.time(),
+        }
+        metrics.inc("async_compaction_completed")
+        metrics.observe("async_compaction_ms", (time.monotonic() - t0) * 1000)
+    except Exception as e:  # noqa: BLE001
+        metrics.inc("async_compaction_error")
+        logger.warning("Async compaction error: %s", e)
+
+
+def schedule_async_compaction(body: dict, session_id: str, api_key: str, session) -> bool:
+    """Return True if a background candidate was scheduled (caller forwards original)."""
+    if not ASYNC_COMPACTION or SHADOW_MODE:
+        return False
+    if session_id in _async_candidates:
+        return False
+    messages = body.get("messages", [])
+    model = body.get("model", "")
+    limit = get_model_context_limit(model)
+    usable = max(1, limit - RESPONSE_BUDGET - SAFETY_MARGIN)
+    tokens = estimate_tokens_accurate(messages)
+    if tokens < usable * SOFT_WATERMARK:
+        return False
+    if tokens >= usable * HARD_WATERMARK:
+        return False  # hard watermark -> synchronous fallback
+    task = asyncio.create_task(
+        _background_compact(copy.deepcopy(body), copy.deepcopy(messages), session_id, api_key, session)
+    )
+    _async_tasks.add(task)
+    task.add_done_callback(_async_tasks.discard)
+    metrics.inc("async_compaction_scheduled")
+    return True
+
+
+def apply_async_candidate(body: dict, session_id: str) -> bool:
+    cand = _async_candidates.pop(session_id, None)
+    if not cand:
+        return False
+    current = body.get("messages", [])
+    tail = current[cand["msg_count"]:]
+    body["messages"] = list(cand["messages"]) + list(tail)
+    metrics.inc("async_compaction_hot_swapped")
+    logger.info("Hot-swapped async checkpoint for %s (evidence=%.2f)", session_id, cand["evidence"])
+    return True
+
+
 def shadow_probe(body: dict, session_id: str = "") -> dict:
     """Observe-only mode: estimate what compaction would do, never mutate the request."""
     messages = body.get("messages", [])
     model = body.get("model", "")
     limit = get_model_context_limit(model)
     usable = max(1, limit - RESPONSE_BUDGET - SAFETY_MARGIN)
-    pct = PREEMPTIVE_THRESHOLD
+    pct = HARD_WATERMARK if ASYNC_COMPACTION else PREEMPTIVE_THRESHOLD
     if ENH_POLICY and AGENT_PROFILE:
         adaptive = effective_threshold(model, AGENT_PROFILE, limit)
         if adaptive > 0:
@@ -6683,6 +6784,12 @@ async def handle_non_streaming(
     # V5: Inject session context into cached system prompt
     inject_session_context(body, session_id)
 
+    if ENH_RESTORE and RESTORE_TOOL and FOLDING_ENABLED and ENH_FOLDING:
+        try:
+            body = inject_restore_tool(body)
+            metrics.inc("restore_tool_injected")
+        except Exception as e:
+            logger.debug(f"restore tool injection skipped: {e}")
     if ENH_CACHE_ALIGN and CACHE_ALIGN:
         try:
             if is_upstream_anthropic():
@@ -6693,9 +6800,13 @@ async def handle_non_streaming(
             logger.debug(f"cache align skipped: {e}")
     body_bytes = json.dumps(body).encode("utf-8")
 
+    apply_async_candidate(body, session_id)
+
     # 预防性压缩检查
     if SHADOW_MODE:
         shadow_probe(body, session_id)
+    elif schedule_async_compaction(body, session_id, api_key, session):
+        metrics.inc("async_compaction_forward_uncompressed")
     elif should_compact_preemptively(body):
         metrics.inc("preemptive_compaction_triggered")
         compacted = await do_compaction(body, api_key, session, is_preemptive=True, session_id=session_id)
@@ -6775,6 +6886,32 @@ async def handle_non_streaming(
             record_upstream_usage(original_model, parse_upstream_usage(json.loads(resp_body)))
         except Exception:
             pass
+        # Phase 2: intercept virtual restore calls and satisfy them internally
+        if ENH_RESTORE and RESTORE_TOOL and FOLDING_ENABLED and ENH_FOLDING and fold_archive is not None:
+            try:
+                resp_json = json.loads(resp_body)
+                calls = extract_restore_calls(resp_json)
+                if calls:
+                    metrics.inc("restore_calls_intercepted", len(calls))
+                    tool_messages = build_restore_messages(
+                        calls, fold_archive, current_tenant() if ENH_TENANT else "default")
+                    assistant_tool_calls = []
+                    for c in calls:
+                        assistant_tool_calls.append({
+                            "id": c["id"], "type": "function",
+                            "function": {"name": RESTORE_TOOL_NAME,
+                                         "arguments": json.dumps(c["args"], ensure_ascii=False)},
+                        })
+                    body.setdefault("messages", []).append({
+                        "role": "assistant", "content": None, "tool_calls": assistant_tool_calls})
+                    body["messages"].extend(tool_messages)
+                    followup_bytes = json.dumps(body).encode("utf-8")
+                    status, resp_body, resp_headers = await forward_request(
+                        session, forward_path, "POST", fwd_headers, followup_bytes, provider=provider)
+                    metrics.inc("restore_followup_completed")
+                    return web.Response(status=status, body=resp_body, headers=resp_headers)
+            except Exception as e:
+                logger.warning(f"restore interception failed (forwarding original): {e}")
         # Convert Anthropic response back to OpenAI format
         if need_anthropic_conversion:
             try:
@@ -6868,9 +7005,13 @@ async def handle_streaming(
     # V5: Inject session context into cached system prompt
     inject_session_context(body, session_id)
 
+    apply_async_candidate(body, session_id)
+
     # 预防性压缩检查
     if SHADOW_MODE:
         shadow_probe(body, session_id)
+    elif schedule_async_compaction(body, session_id, api_key, session):
+        metrics.inc("async_compaction_forward_uncompressed")
     elif should_compact_preemptively(body):
         metrics.inc("preemptive_compaction_triggered")
         compacted = await do_compaction(body, api_key, session, is_preemptive=True, session_id=session_id)
@@ -6898,6 +7039,12 @@ async def handle_streaming(
         else:
             upstream_url = UPSTREAM_BASE.rstrip("/") + "/chat/completions"
 
+    if ENH_RESTORE and RESTORE_TOOL and FOLDING_ENABLED and ENH_FOLDING and not need_anthropic_conversion:
+        try:
+            body = inject_restore_tool(body)
+            metrics.inc("restore_tool_injected")
+        except Exception as e:
+            logger.debug(f"restore tool injection skipped: {e}")
     if ENH_CACHE_ALIGN and CACHE_ALIGN:
         try:
             if need_anthropic_conversion:
@@ -7580,6 +7727,20 @@ async def handle_health(request: web.Request) -> web.Response:
             "hit_ratio_avg": round(
                 metrics.get("upstream_cache_hit_ratio_sum")
                 / max(1.0, metrics.get("upstream_cache_hit_ratio_n", 1)), 3),
+        },
+        "restore_tool": {
+            "enabled": bool(RESTORE_TOOL and ENH_RESTORE and FOLDING_ENABLED),
+            "injections": metrics.get("restore_tool_injected"),
+            "intercepted": metrics.get("restore_calls_intercepted"),
+            "followups": metrics.get("restore_followup_completed"),
+        },
+        "async_compaction": {
+            "enabled": ASYNC_COMPACTION,
+            "scheduled": metrics.get("async_compaction_scheduled"),
+            "completed": metrics.get("async_compaction_completed"),
+            "rejected": metrics.get("async_compaction_rejected"),
+            "hot_swapped": metrics.get("async_compaction_hot_swapped"),
+            "p95_ms": metrics.percentiles("async_compaction_ms").get("p95", 0),
         },
         "shadow": {
             "enabled": SHADOW_MODE,
